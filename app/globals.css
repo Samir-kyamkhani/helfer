@@ -152,7 +152,7 @@
 
   &::after {
     --mark: oklch(0.74 0.16 55 / 0.7);
-    --size: 14px;
+    --size: 12px;
     content: "";
     position: absolute;
     inset: -8px;
@@ -184,6 +184,9 @@
 }
 
 @utility scroll-tilt {
+  transform-style: preserve-3d;
+  transform-origin: center top;
+
   @supports (animation-timeline: scroll()) {
     @media (prefers-reduced-motion: no-preference) {
       animation: scroll-tilt linear both;

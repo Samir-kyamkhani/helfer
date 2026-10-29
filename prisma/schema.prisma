@@ -11,3 +11,108 @@ generator client {
 datasource db {
   provider = "postgresql"
 }
+
+model User {
+  id       String @id @default(cuid())
+  clerkId  String @unique @map("clerk_id")
+  email    String @unique
+  name     String
+  imageUrl String @map("image_url")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Workspace this user created - memebership/roles for all worksapces live in clerk organizations, not here, so this is just "who to blame/bill" rather than an access-controll source of truth.
+
+  createdWorkspaces Workspace[]
+  agentPrompts      AgentPrompt[]
+}
+
+enum WorkspaceStatus {
+  PLANNING
+  IN_PROGRESS
+  IN_REVIEW
+  DONE
+}
+
+model Workspace {
+  id          String  @id @default(cuid())
+  name        String
+  description String?
+  creatorId   String  @map("creator_id")
+  creator     User    @relation(fields: [creatorId], references: [id], onDelete: Cascade)
+
+  // personal workspace has no org behind it under Membership-optional mode.
+
+  clerkOrgId String? @map("clerk_org_id")
+
+  // Dashboard kanban coulmn + order within it. position is float so a dropped card can take the midpoint between its neighbers - only the moved card ever gets writen.
+
+  status   WorkspaceStatus @default(PLANNING)
+  position Float           @default(0)
+
+  // Public read only link token; null means sharing is off. Reseting it kills old links.
+
+  shareToken String? @unique @map("share_token")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Every workspace is always exactly one doc + one canvas, paired - not a generic lists of surfaces. Both are created alongside  the workspace itself.
+
+  Doc         Doc?
+  canvas      Canvas?
+  agentPrompt AgentPrompt[]
+
+  @@index([creatorId])
+  @@index([clerkOrgId])
+}
+
+model Doc {
+  id          String @id @default(cuid())
+  workspaceId String @unique @map("workspace_id")
+
+  // BlockNote block JSON - a readable copy for server side feature (agent, share, veiw).
+
+  constent Json?
+
+  //YJS document state - the real-time collabration source of truth.
+
+  yjsState Bytes? @map("yjs_state")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+}
+
+model Canvas {
+  id String @id @default(cuid())
+
+  workspaceId String @unique @map("workspace_id")
+
+  //tldraw shape/store snapshot.
+  content Json?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+}
+
+model AgentPrompt {
+  id String @id @default(cuid())
+
+  // Who the prompt counts against: the workspace's Clerk Ord Id, or the clerk  User id for a personal workspace. Clerk prefixes ids ("org_", "user_"), so the two never cllide.
+
+  ownerId     String
+  userId      String
+  workspaceId String?  @map("workspace_id")
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  user      User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  workspace Workspace? @relation(fields: [workspaceId], references: [id], onDelete: SetNull)
+
+  @@index([ownerId, createdAt])
+}
