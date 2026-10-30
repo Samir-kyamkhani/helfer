@@ -455,7 +455,7 @@ export default function Home() {
                       <span className="relative z-10 grid size-12 shrink-0 place-items-center rounded-full border border-primary/45 bg-background text-primary ring-8 ring-background">
                         <Icon aria-hidden="true" className="size-5" />
                       </span>
-                      <div className="min-w-0 rounded-2xl border border-white/8 bg-white/[0.02] p-5 sm:p-6">
+                      <div className="min-w-0 rounded-2xl border border-white/8 bg-white/2 p-5 sm:p-6">
                         <p className="font-mono text-[10px] tracking-[0.16em] text-primary">
                           {step.number}
                         </p>

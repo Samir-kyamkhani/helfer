@@ -60,7 +60,7 @@ model Workspace {
 
   // Every workspace is always exactly one doc + one canvas, paired - not a generic lists of surfaces. Both are created alongside  the workspace itself.
 
-  Doc         Doc?
+  doc         Doc?
   canvas      Canvas?
   agentPrompt AgentPrompt[]
 
