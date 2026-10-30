@@ -13,6 +13,8 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { landingCopy } from "./_data/landing";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { PricingTable } from "@clerk/nextjs";
 
 type LandingFeature = (typeof landingCopy.features.rows)[number];
 type LandingStep = (typeof landingCopy.howItWorks.steps)[number];
@@ -31,6 +33,9 @@ const stepIcons: Record<LandingStep["id"], LucideIcon> = {
   draw: Workflow,
   iterate: UsersRound,
 };
+
+const PRICINGTAB =
+  "rounded-full px-5 py-1.5 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground dark:data-[state=active]:bg-primary dark:data-[state=active]:text-primary-foreground";
 
 function PreviewHeader({
   workspace,
@@ -473,26 +478,35 @@ export default function Home() {
           id="pricing"
           className="scroll-mt-20 border-t border-white/8 px-6 py-24 md:px-10 md:py-32"
         >
-          <div className="mx-auto max-w-4xl text-center">
+          <div className="mx-auto w-full max-w-7xl text-center">
             <p className="mb-4 font-mono text-[10px] font-medium uppercase tracking-[0.18em] text-primary">
               {pricing.eyebrow}
             </p>
             <h2 className="font-heading text-4xl font-semibold tracking-[-0.04em] sm:text-5xl">
               {pricing.heading}
             </h2>
-            <div className="mx-auto mt-10 max-w-2xl rounded-2xl border border-dashed border-white/15 bg-white/1.5`tailwindcss(suggestCanonicalClasses) px-6 py-10 sm:px-10 sm:py-12">
-              <span className="inline-flex rounded-full border border-primary/25 bg-primary/8 px-3 py-1 font-mono text-[10px] uppercase tracking-[0.14em] text-primary">
-                {pricing.placeholder}
-              </span>
-              <p className="mx-auto mt-5 max-w-lg text-sm leading-6 text-muted-foreground sm:text-base sm:leading-7">
-                {pricing.description}
-              </p>
-              <Button asChild size="lg" className="mt-7 h-11 rounded-xl px-5">
-                <Link href={pricing.action.href}>
-                  {pricing.action.label}
-                  <ArrowUpRight aria-hidden="true" className="size-4" />
-                </Link>
-              </Button>
+            <div className="mt-10 w-full rounded-2xl border border-dashed border-white/15 bg-white/1.5 px-3 py-8 sm:px-3 sm:py-10 lg:px-6 lg:py-12">
+              <Tabs
+                defaultValue="user"
+                className="mx-auto flex w-full min-w-0 flex-col items-center gap-10"
+              >
+                <TabsList className="h-auto rounded-full border border-white/10 bg-white/5 p-1">
+                  <TabsTrigger value="user" className={PRICINGTAB}>
+                    Personal
+                  </TabsTrigger>
+                  <TabsTrigger value="organization" className={PRICINGTAB}>
+                    Team
+                  </TabsTrigger>
+                </TabsList>
+
+                <TabsContent value="user" className="w-full min-w-0">
+                  <PricingTable for="user" />
+                </TabsContent>
+
+                <TabsContent value="organization" className="w-full min-w-0">
+                  <PricingTable for="organization" />
+                </TabsContent>
+              </Tabs>
             </div>
           </div>
         </section>

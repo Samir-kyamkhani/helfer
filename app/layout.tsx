@@ -12,6 +12,7 @@ import { Toaster } from "@/components/ui/sonner";
 import AppShell from "@/components/AppShell";
 import { dark } from "@clerk/ui/themes";
 import { ClerkProvider } from "@clerk/nextjs";
+import { UpgradeDialogProvider } from "@/components/UpgradeDialog";
 
 const ibmPlexSans = IBM_Plex_Sans({
   subsets: ["latin"],
@@ -64,7 +65,9 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
       >
         <body className="min-h-full flex flex-col">
           <TooltipProvider>
-            <AppShell>{children}</AppShell>
+            <UpgradeDialogProvider>
+              <AppShell>{children}</AppShell>
+            </UpgradeDialogProvider>
           </TooltipProvider>
           <Toaster richColors />
         </body>
