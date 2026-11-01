@@ -5,7 +5,7 @@ import { KanbanSquare, Plus } from "lucide-react";
 import RecentWorkspaces from "./_components/RecentWorkspaces";
 import WorkspaceDialog from "@/components/WorkspaceDialog";
 import DashboardPrompt from "./_components/DashboardPrompt";
-import { getWorkspaces } from "@/actions/workspace";
+import { getRecentWorkspaces, getWorkspaces } from "@/actions/workspace";
 
 export default function DashboardPage() {
   return (
@@ -15,14 +15,9 @@ export default function DashboardPage() {
   );
 }
 
-const RECENT_COUNT = 4;
-
 async function DashboardContent() {
   const { orgName, workspaces } = await getWorkspaces();
-
-  const recentWorkspaces = workspaces
-    .sort((a, b) => b.lastActivity.getTime() - a.lastActivity.getTime())
-    .slice(0, RECENT_COUNT);
+  const { workspaces: recentWorkspaces } = await getRecentWorkspaces();
 
   return (
     <div className="p-8">
@@ -49,7 +44,7 @@ async function DashboardContent() {
             )}
 
             <WorkspaceDialog
-              triger={
+              trigger={
                 <Button variant="outline" size="sm" className="gap-1.5">
                   <Plus className="size-4" />
                   New workspace
