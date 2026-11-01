@@ -4,6 +4,7 @@ import { NextResponse } from "next/server";
 const isProctectedRoute = createRouteMatcher([
   "/dashboard(.*)",
   "/workspace(.*)",
+  "/workspaces(.*)",
 ]);
 
 export default clerkMiddleware(async (auth, req) => {

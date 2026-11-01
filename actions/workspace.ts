@@ -3,10 +3,12 @@
 import { FREE_WORKSPACE_LIMIT, LimitError } from "@/lib/plan-limits";
 import { checkUser } from "./check-user";
 import { auth } from "@clerk/nextjs/server";
-import { scopeWhere } from "@/lib/workspace-scope";
+import { getWorkspaceScope, scopeWhere } from "@/lib/workspace-scope";
 import { getEntitlements } from "@/lib/billing";
 import { prisma } from "@/lib/prisma";
 import { revalidatePath } from "next/cache";
+import { withLastActivity, workspaceCardSelect } from "@/lib/workspace-status";
+import { WorkspaceCardData } from "@/components/workspaceCard";
 
 function revalidateWorkspaceLists() {
   revalidatePath("/workspaces");
@@ -62,4 +64,25 @@ export async function createWorkspace(
   revalidateWorkspaceLists();
 
   return { workspace: { id: workspace.id } };
+}
+
+export async function getWorkspaces(): Promise<{
+  orgName: string;
+  workspaces: WorkspaceCardData[];
+}> {
+  const user = await checkUser();
+
+  if (!user) throw new Error("User not authenticated");
+
+  const { orgName, where } = await getWorkspaceScope(user.id);
+
+  const workspaces = await prisma.workspace.findMany({
+    where,
+    select: workspaceCardSelect,
+  });
+
+  return {
+    orgName,
+    workspaces: workspaces.map(withLastActivity),
+  };
 }

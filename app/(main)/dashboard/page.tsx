@@ -1,15 +1,11 @@
 import { Suspense } from "react";
-import { checkUser } from "@/actions/check-user";
-import { redirect } from "next/navigation";
-import { getWorkspaceScope } from "@/lib/workspace-scope";
-import { withLastActivity, workspaceCardSelect } from "@/lib/workspace-status";
-import { prisma } from "@/lib/prisma";
 import { Button } from "@/components/ui/button";
 import Link from "next/link";
 import { KanbanSquare, Plus } from "lucide-react";
 import RecentWorkspaces from "./_components/RecentWorkspaces";
 import WorkspaceDialog from "@/components/WorkspaceDialog";
 import DashboardPrompt from "./_components/DashboardPrompt";
+import { getWorkspaces } from "@/actions/workspace";
 
 export default function DashboardPage() {
   return (
@@ -22,19 +18,9 @@ export default function DashboardPage() {
 const RECENT_COUNT = 4;
 
 async function DashboardContent() {
-  const user = await checkUser();
-
-  if (!user) redirect("/sign-in");
-
-  const { orgName, where } = await getWorkspaceScope(user.id);
-
-  const workspaces = await prisma.workspace.findMany({
-    where,
-    select: workspaceCardSelect,
-  });
+  const { orgName, workspaces } = await getWorkspaces();
 
   const recentWorkspaces = workspaces
-    .map(withLastActivity)
     .sort((a, b) => b.lastActivity.getTime() - a.lastActivity.getTime())
     .slice(0, RECENT_COUNT);
 
