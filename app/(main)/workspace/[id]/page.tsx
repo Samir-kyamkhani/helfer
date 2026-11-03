@@ -21,6 +21,7 @@ import type { UIMessage } from "ai";
 import { PlanButton } from "@/components/PlanButton";
 import { ShareDialog } from "../_components/ShareDialog";
 import { getWorkspaceEntitlements } from "@/lib/billing";
+import { SuspenseFallback } from "@/components/SuspenseFallback";
 
 type ViewMode = "doc" | "canvas" | "both";
 
@@ -153,7 +154,7 @@ async function WorkspaceContent({
 
 export default function WorkspacePage(props: PageProps<"/workspace/[id]">) {
   return (
-    <React.Suspense fallback={<div className="h-dvh bg-background" />}>
+    <React.Suspense fallback={<SuspenseFallback fullScreen />}>
       <WorkspaceContent {...props} />
     </React.Suspense>
   );

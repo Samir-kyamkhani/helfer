@@ -3,6 +3,7 @@
 import { usePathname } from "next/navigation";
 import React, { Suspense } from "react";
 import { SiteHeader } from "./SiteHeader";
+import { SuspenseFallback } from "./SuspenseFallback";
 
 function AppShellContent({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
@@ -24,7 +25,7 @@ function AppShellContent({ children }: { children: React.ReactNode }) {
 
 function AppShell({ children }: { children: React.ReactNode }) {
   return (
-    <Suspense fallback={null}>
+    <Suspense fallback={<SuspenseFallback fullScreen />}>
       <AppShellContent>{children}</AppShellContent>
     </Suspense>
   );

@@ -6,10 +6,11 @@ import RecentWorkspaces from "./_components/RecentWorkspaces";
 import { WorkspaceDialog } from "@/components/WorkspaceDialog";
 import DashboardPrompt from "./_components/DashboardPrompt";
 import { getRecentWorkspaces, getWorkspaces } from "@/actions/workspace";
+import { SuspenseFallback } from "@/components/SuspenseFallback";
 
 export default function DashboardPage() {
   return (
-    <Suspense fallback={<div>Loading dashboard...</div>}>
+    <Suspense fallback={<SuspenseFallback />}>
       <DashboardContent />
     </Suspense>
   );

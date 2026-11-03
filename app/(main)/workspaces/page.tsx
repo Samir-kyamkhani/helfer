@@ -4,10 +4,11 @@ import { WorkspaceDialog } from "@/components/WorkspaceDialog";
 import { Plus } from "lucide-react";
 import WorkspaceBoard from "./_components/WorkspaceBoard";
 import { Suspense } from "react";
+import { SuspenseFallback } from "@/components/SuspenseFallback";
 
 export default function WorkspacesPage() {
   return (
-    <Suspense fallback={<div>Loading workspaces...</div>}>
+    <Suspense fallback={<SuspenseFallback />}>
       <WorkspacesContent />
     </Suspense>
   );

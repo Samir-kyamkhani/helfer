@@ -12,6 +12,7 @@ import {
 } from "@/components/ui/resizable";
 import { DocViewer } from "@/app/(main)/workspace/_components/DocEditorLoader";
 import { CanvasViewer } from "@/app/(main)/workspace/_components/CanvasViewerLoader";
+import { SuspenseFallback } from "@/components/SuspenseFallback";
 
 async function SharedWorkspace({
   params,
@@ -80,7 +81,7 @@ async function SharedWorkspace({
 
 export default function SharedPage(props: PageProps<"/shared/[token]">) {
   return (
-    <React.Suspense fallback={<div className="h-dvh bg-background" />}>
+    <React.Suspense fallback={<SuspenseFallback fullScreen />}>
       <SharedWorkspace {...props} />
     </React.Suspense>
   );
