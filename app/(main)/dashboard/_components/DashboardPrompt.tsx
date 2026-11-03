@@ -54,7 +54,9 @@ function DashboardPrompt() {
 
     toast.success("Workspace created successfully");
 
-    router.push(`/workspaces/${result.workspace.id}?prompt=${encodeURIComponent(trimmed)}`);
+    router.push(
+      `/workspace/${result.workspace.id}?prompt=${encodeURIComponent(trimmed)}`,
+    );
   };
 
   return (
