@@ -4,7 +4,11 @@ import { FREE_WORKSPACE_LIMIT, LimitError } from "@/lib/plan-limits";
 import { checkUser } from "./check-user";
 import { auth } from "@clerk/nextjs/server";
 import { getWorkspaceScope, scopeWhere } from "@/lib/workspace-scope";
-import { getEntitlements, workspaceOwnerSelect } from "@/lib/billing";
+import {
+  getEntitlements,
+  getWorkspaceOwnerId,
+  workspaceOwnerSelect,
+} from "@/lib/billing";
 import { prisma } from "@/lib/prisma";
 import { revalidatePath } from "next/cache";
 import { withLastActivity, workspaceCardSelect } from "@/lib/workspace-status";
@@ -12,6 +16,7 @@ import { WorkspaceCardData } from "@/components/workspaceCard";
 import { WorkspaceStatus } from "@/lib/generated/prisma/enums";
 import { canAccessWorkspace } from "@/lib/workspace-access";
 import { Prisma } from "@/lib/generated/prisma/client";
+import { randomBytes } from "node:crypto";
 
 function revalidateWorkspaceLists() {
   revalidatePath("/workspaces");
@@ -70,6 +75,9 @@ export async function getWorkspaces(): Promise<{
 
 export async function getWorkspace(workspaceId: string): Promise<{
   name: string;
+  shareToken: string | null;
+  clerkOrgId: string | null;
+  creator: { clerkId: string };
   canvas: { content: Prisma.JsonValue } | null;
   agentChat: { messages: Prisma.JsonValue } | null;
   doc: {
@@ -77,23 +85,30 @@ export async function getWorkspace(workspaceId: string): Promise<{
     yjsState: Uint8Array<ArrayBuffer> | null;
   } | null;
 } | null> {
-  // if (!(await canAccessWorkspace(workspaceId))) {
-  //   throw new Error("workspace not found or access denied");
-  // }
-
   const workspace = await prisma.workspace.findUnique({
     where: { id: workspaceId },
     select: {
       name: true,
-      doc: { select: { content: true, yjsState: true } },
-      canvas: { select: { content: true } },
-      agentChat: { select: { messages: true } },
+      shareToken: true,
+      ...workspaceOwnerSelect,
+      doc: {
+        select: {
+          content: true,
+          yjsState: true,
+        },
+      },
+      canvas: {
+        select: {
+          content: true,
+        },
+      },
+      agentChat: {
+        select: {
+          messages: true,
+        },
+      },
     },
   });
-
-  // if (!workspace) {
-  //   throw new Error("workspace not found or access denied");
-  // }
 
   return workspace;
 }
@@ -228,4 +243,33 @@ export async function moveWorkspacePosition(
   });
 
   revalidateWorkspaceLists();
+}
+
+// Turning sharing on creates a fresh token, so re-enabling never revives an old link.
+// Resetting is the same as turning it on again: the previous link stops working.
+export async function setWorkspaceSharing(
+  workspaceId: string,
+  enabled: boolean,
+): Promise<{ shareToken: string | null } | { limit: LimitError }> {
+  if (!(await canAccessWorkspace(workspaceId)))
+    throw new Error("Workspace not found");
+
+  if (
+    enabled &&
+    !(await getEntitlements(await getWorkspaceOwnerId(workspaceId)))
+      .publicSharing
+  ) {
+    return { limit: "sharing" };
+  }
+
+  const { shareToken } = await prisma.workspace.update({
+    where: { id: workspaceId },
+    data: {
+      shareToken: enabled ? randomBytes(24).toString("base64url") : null,
+    },
+    select: { shareToken: true },
+  });
+
+  revalidatePath(`/workspace/${workspaceId}`);
+  return { shareToken };
 }

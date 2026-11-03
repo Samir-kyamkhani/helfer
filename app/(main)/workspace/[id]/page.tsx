@@ -18,6 +18,9 @@ import { Block } from "@blocknote/core";
 import { DocEditor } from "../_components/DocEditorLoader";
 import { AgentToggleButton } from "../_components/AgentTogleButton";
 import type { UIMessage } from "ai";
+import { PlanButton } from "@/components/PlanButton";
+import { ShareDialog } from "../_components/ShareDialog";
+import { getEntitlements, workspaceOwnerId } from "@/lib/billing";
 
 type ViewMode = "doc" | "canvas" | "both";
 
@@ -38,10 +41,12 @@ async function WorkspaceContent({
   const workspace = await getWorkspace(id);
 
   if (!workspace) notFound();
+  const entitlements = await getEntitlements(workspaceOwnerId(workspace));
 
   const showDoc = viewMode === "doc" || viewMode === "both";
   const showCanvas = viewMode === "canvas" || viewMode === "both";
-  const initialMessages = (workspace.agentChat?.messages ?? []) as unknown as UIMessage[];
+  const initialMessages = (workspace.agentChat?.messages ??
+    []) as unknown as UIMessage[];
 
   return (
     <WorkspaceEditorsProvider>
@@ -90,6 +95,16 @@ async function WorkspaceContent({
           </div>
 
           <div className="flex flex-1 items-center justify-end gap-2">
+            <PlanButton upgradeOnlyWhenOut />
+
+            <ShareDialog
+              workspaceId={id}
+              workspaceName={workspace.name}
+              initialShareToken={workspace.shareToken}
+              canShare={entitlements.publicSharing}
+              canExportPdf={entitlements.pdfExport}
+            />
+
             <AgentToggleButton
               key={id}
               workspaceId={id}
