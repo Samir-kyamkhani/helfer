@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useSyncExternalStore } from "react";
+import { useRef, useState, useSyncExternalStore } from "react";
 import {
   Copy,
   FileText,
@@ -61,6 +61,7 @@ export function ShareDialog({
   const [open, setOpen] = useState(false);
   const [shareToken, setShareToken] = useState(initialShareToken);
   const [exporting, setExporting] = useState<"doc" | "canvas" | null>(null);
+  const pendingUpgradeReason = useRef<LimitError | null>(null);
   const { canvasEditor, docEditor } = useWorkspaceEditors();
   const { fn: setSharingFn, loading } = useFetch(setWorkspaceSharing);
   const origin = useSyncExternalStore(
@@ -72,10 +73,10 @@ export function ShareDialog({
 
   const openUpgrade = useUpgradeDialog();
 
-  // Close this dialog first: two modal dialogs at once fight over focus.
+  // Open the upgrade dialog after this dialog finishes closing so their focus handling doesn't race.
   const showUpgrade = (reason: LimitError) => {
+    pendingUpgradeReason.current = reason;
     setOpen(false);
-    openUpgrade(UPGRADE_REASONS[reason]);
   };
 
   const updateSharing = async (enabled: boolean) => {
@@ -164,7 +165,16 @@ export function ShareDialog({
           Share
         </Button>
       </DialogTrigger>
-      <DialogContent>
+      <DialogContent
+        onCloseAutoFocus={(event) => {
+          const reason = pendingUpgradeReason.current;
+          if (!reason) return;
+
+          event.preventDefault();
+          pendingUpgradeReason.current = null;
+          openUpgrade(UPGRADE_REASONS[reason]);
+        }}
+      >
         <DialogHeader>
           <DialogTitle>Share &ldquo;{workspaceName}&rdquo;</DialogTitle>
           <DialogDescription>

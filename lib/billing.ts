@@ -1,4 +1,4 @@
-import { clerkClient } from "@clerk/nextjs/server";
+import { auth, clerkClient } from "@clerk/nextjs/server";
 import { prisma } from "@/lib/prisma";
 import { FREE_MONTHLY_PROMPTS } from "@/lib/plan-limits";
 
@@ -7,6 +7,14 @@ const PROMPT_FEATURES = [
   { feature: "agent_prompts_2000", perMember: 2000 },
   { feature: "agent_prompts_500", perMember: 500 },
 ];
+
+function normalizeFeatureSlug(slug: string) {
+  return slug
+    .replace(/([a-z0-9])([A-Z])/g, "$1_$2")
+    .replace(/[^a-zA-Z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "")
+    .toLowerCase();
+}
 
 // Everything is scoped to an "owner": a Clerk org id for org workspaces, or a Clerk user id for
 // personal ones. Clerk prefixes its ids, so they can't collide.
@@ -20,6 +28,34 @@ export function workspaceOwnerId(workspace: {
   creator: { clerkId: string };
 }) {
   return workspace.clerkOrgId ?? workspace.creator.clerkId;
+}
+
+// Org workspaces use their org's plan. Personal workspaces can use either the creator's plan
+// or the currently active org's plan, matching the plan shown in the app header.
+export async function getWorkspaceEntitlements(workspace: {
+  clerkOrgId: string | null;
+  creator: { clerkId: string };
+}) {
+  if (workspace.clerkOrgId) return getEntitlements(workspace.clerkOrgId);
+
+  const personalEntitlements = await getEntitlements(workspace.creator.clerkId);
+  const { orgId } = await auth();
+  if (!orgId) return personalEntitlements;
+
+  const orgEntitlements = await getEntitlements(orgId);
+  return {
+    isPaid: personalEntitlements.isPaid || orgEntitlements.isPaid,
+    promptLimit: Math.max(
+      personalEntitlements.promptLimit,
+      orgEntitlements.promptLimit,
+    ),
+    unlimitedWorkspaces:
+      personalEntitlements.unlimitedWorkspaces ||
+      orgEntitlements.unlimitedWorkspaces,
+    publicSharing:
+      personalEntitlements.publicSharing || orgEntitlements.publicSharing,
+    pdfExport: personalEntitlements.pdfExport || orgEntitlements.pdfExport,
+  };
 }
 
 export async function getWorkspaceOwnerId(workspaceId: string) {
@@ -36,6 +72,7 @@ export async function getEntitlements(ownerId: string) {
   const clerk = await clerkClient();
   const isOrg = ownerId.startsWith("org_");
   const features = new Set<string>();
+  let hasPaidPlan = false;
 
   try {
     const subscription = isOrg
@@ -44,7 +81,10 @@ export async function getEntitlements(ownerId: string) {
     for (const item of subscription.subscriptionItems) {
       // past_due keeps access while Clerk retries the payment.
       if (item.status === "active" || item.status === "past_due") {
-        item.plan?.features.forEach((feature) => features.add(feature.slug));
+        if (item.plan && !item.plan.isDefault) hasPaidPlan = true;
+        item.plan?.features.forEach((feature) =>
+          features.add(normalizeFeatureSlug(feature.slug)),
+        );
       }
     }
   } catch {
@@ -52,6 +92,7 @@ export async function getEntitlements(ownerId: string) {
   }
 
   const paid = PROMPT_FEATURES.find(({ feature }) => features.has(feature));
+  const isPaid = hasPaidPlan || !!paid;
   let promptLimit = FREE_MONTHLY_PROMPTS;
   if (paid) {
     const members = isOrg
@@ -66,10 +107,10 @@ export async function getEntitlements(ownerId: string) {
   }
 
   return {
-    isPaid: !!paid,
+    isPaid,
     promptLimit,
     unlimitedWorkspaces: features.has("unlimited_workspaces"),
-    publicSharing: features.has("public_sharing"),
+    publicSharing: features.has("public_sharing") || hasPaidPlan,
     pdfExport: features.has("pdf_export"),
   };
 }

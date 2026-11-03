@@ -6,7 +6,7 @@ import { auth } from "@clerk/nextjs/server";
 import { getWorkspaceScope, scopeWhere } from "@/lib/workspace-scope";
 import {
   getEntitlements,
-  getWorkspaceOwnerId,
+  getWorkspaceEntitlements,
   workspaceOwnerSelect,
 } from "@/lib/billing";
 import { prisma } from "@/lib/prisma";
@@ -254,11 +254,12 @@ export async function setWorkspaceSharing(
   if (!(await canAccessWorkspace(workspaceId)))
     throw new Error("Workspace not found");
 
-  if (
-    enabled &&
-    !(await getEntitlements(await getWorkspaceOwnerId(workspaceId)))
-      .publicSharing
-  ) {
+  const workspace = await prisma.workspace.findUniqueOrThrow({
+    where: { id: workspaceId },
+    select: workspaceOwnerSelect,
+  });
+
+  if (enabled && !(await getWorkspaceEntitlements(workspace)).publicSharing) {
     return { limit: "sharing" };
   }
 

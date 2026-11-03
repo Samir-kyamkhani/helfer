@@ -20,7 +20,7 @@ import { AgentToggleButton } from "../_components/AgentTogleButton";
 import type { UIMessage } from "ai";
 import { PlanButton } from "@/components/PlanButton";
 import { ShareDialog } from "../_components/ShareDialog";
-import { getEntitlements, workspaceOwnerId } from "@/lib/billing";
+import { getWorkspaceEntitlements } from "@/lib/billing";
 
 type ViewMode = "doc" | "canvas" | "both";
 
@@ -41,7 +41,7 @@ async function WorkspaceContent({
   const workspace = await getWorkspace(id);
 
   if (!workspace) notFound();
-  const entitlements = await getEntitlements(workspaceOwnerId(workspace));
+  const entitlements = await getWorkspaceEntitlements(workspace);
 
   const showDoc = viewMode === "doc" || viewMode === "both";
   const showCanvas = viewMode === "canvas" || viewMode === "both";
