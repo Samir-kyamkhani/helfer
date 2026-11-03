@@ -39,7 +39,7 @@ async function SharedWorkspace({
         <Link href="/" className="flex items-center gap-2">
           <Image
             src="/brand/mascot-dark.png"
-            alt="Outpost"
+            alt="Helfer"
             width={24}
             height={24}
             className="size-6"

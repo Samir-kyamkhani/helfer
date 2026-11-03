@@ -49,7 +49,7 @@
   --radius-4xl: calc(var(--radius) * 2.6);
 }
 
-/* Outpost is dark-mode only, so :root and .dark share one palette — no light variant to maintain. */
+/* Helfer is dark-mode only, so :root and .dark share one palette — no light variant to maintain. */
 :root,
 .dark {
   --background: oklch(0.13 0.004 285);
@@ -112,7 +112,7 @@
   }
 }
 
-/* Topographic contours (public/textures/topo.svg): Outpost's background identity, a nod to
+/* Topographic contours (public/textures/topo.svg): Helfer's background identity, a nod to
    mapping unknown territory. Opt-in per section, never over the doc or canvas editors.
    The SVG is used as a mask over a color gradient, so lines glow amber at the center and cool to grey
    at the edges; a second mask layer fades the whole map out softly. */

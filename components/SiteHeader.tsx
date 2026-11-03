@@ -29,7 +29,7 @@ export function SiteHeader() {
       >
         <Image
           src="/brand/logo-navbar-dark.png"
-          alt="Outpost"
+          alt="Helfer"
           width={314}
           height={160}
           className="h-9 w-auto"
