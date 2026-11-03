@@ -63,6 +63,7 @@ model Workspace {
   doc         Doc?
   canvas      Canvas?
   agentPrompt AgentPrompt[]
+  agentChat   AgentChatHistory?
 
   @@index([creatorId])
   @@index([clerkOrgId])
@@ -74,7 +75,7 @@ model Doc {
 
   // BlockNote block JSON - a readable copy for server side feature (agent, share, veiw).
 
-  constent Json?
+  content Json?
 
   //YJS document state - the real-time collabration source of truth.
 
@@ -115,4 +116,14 @@ model AgentPrompt {
   workspace Workspace? @relation(fields: [workspaceId], references: [id], onDelete: SetNull)
 
   @@index([ownerId, createdAt])
+}
+
+model AgentChatHistory {
+  id          String   @id @default(cuid())
+  workspaceId String   @unique @map("workspace_id")
+  messages    Json
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
 }

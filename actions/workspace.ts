@@ -11,6 +11,7 @@ import { withLastActivity, workspaceCardSelect } from "@/lib/workspace-status";
 import { WorkspaceCardData } from "@/components/workspaceCard";
 import { WorkspaceStatus } from "@/lib/generated/prisma/enums";
 import { canAccessWorkspace } from "@/lib/workspace-access";
+import { Prisma } from "@/lib/generated/prisma/client";
 
 function revalidateWorkspaceLists() {
   revalidatePath("/workspaces");
@@ -65,6 +66,36 @@ export async function getWorkspaces(): Promise<{
     orgName,
     workspaces: workspaces.map(withLastActivity),
   };
+}
+
+export async function getWorkspace(workspaceId: string): Promise<{
+  name: string;
+  canvas: { content: Prisma.JsonValue } | null;
+  agentChat: { messages: Prisma.JsonValue } | null;
+  doc: {
+    content: Prisma.JsonValue;
+    yjsState: Uint8Array<ArrayBuffer> | null;
+  } | null;
+} | null> {
+  // if (!(await canAccessWorkspace(workspaceId))) {
+  //   throw new Error("workspace not found or access denied");
+  // }
+
+  const workspace = await prisma.workspace.findUnique({
+    where: { id: workspaceId },
+    select: {
+      name: true,
+      doc: { select: { content: true, yjsState: true } },
+      canvas: { select: { content: true } },
+      agentChat: { select: { messages: true } },
+    },
+  });
+
+  // if (!workspace) {
+  //   throw new Error("workspace not found or access denied");
+  // }
+
+  return workspace;
 }
 
 export async function createWorkspace(
