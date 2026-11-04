@@ -13,7 +13,7 @@ export type WorkspaceCardData = {
   lastActivity: Date;
   creator: {
     name: string | null;
-    imageUrl: string | null;
+    image: string | null;
   };
 };
 
@@ -69,9 +69,9 @@ export function WorkspaceCard({
 function CreatorAvatar({ creator }: { creator: WorkspaceCardData["creator"] }) {
   const name = creator.name ?? "Unknown";
 
-  return creator.imageUrl ? (
+  return creator.image ? (
     <Image
-      src={creator.imageUrl}
+      src={creator.image}
       alt={name}
       title={name}
       width={20}

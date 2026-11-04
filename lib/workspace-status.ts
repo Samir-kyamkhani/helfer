@@ -8,7 +8,7 @@ export const workspaceCardSelect = {
   description: true,
   status: true,
   updatedAt: true,
-  creator: { select: { name: true, imageUrl: true } },
+  creator: { select: { name: true, image: true } },
   doc: { select: { updatedAt: true } },
   canvas: { select: { updatedAt: true } },
 } as const;
