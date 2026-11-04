@@ -1,5 +1,5 @@
 // Free-plan limits and the upgrade dialog's messages, shared by server checks and client UI.
-// Paid limits come from Clerk plan features (see lib/billing.ts).
+// Paid limits come from the local subscription plan catalog (see lib/billing.ts).
 
 export const FREE_WORKSPACE_LIMIT = 3;
 export const FREE_MONTHLY_PROMPTS = 20;

@@ -1,60 +1,38 @@
-import { auth, clerkClient } from "@clerk/nextjs/server";
+import { BillingOwnerType, SubscriptionStatus } from "@/lib/generated/prisma/enums";
+import { Prisma } from "@/lib/generated/prisma/client";
 import { prisma } from "@/lib/prisma";
-import { FREE_MONTHLY_PROMPTS } from "@/lib/plan-limits";
+import { FREE_MONTHLY_PROMPTS, FREE_WORKSPACE_LIMIT } from "@/lib/plan-limits";
+import { getCurrentSession } from "@/lib/auth/session";
 
-// Paid prompt allowances come from Clerk plan features (checked in order), per member for team plans.
-const PROMPT_FEATURES = [
-  { feature: "agent_prompts_2000", perMember: 2000 },
-  { feature: "agent_prompts_500", perMember: 500 },
-];
+export type BillingOwner = {
+  ownerType: BillingOwnerType;
+  ownerId: string;
+};
 
-function normalizeFeatureSlug(slug: string) {
-  return slug
-    .replace(/([a-z0-9])([A-Z])/g, "$1_$2")
-    .replace(/[^a-zA-Z0-9]+/g, "_")
-    .replace(/^_+|_+$/g, "")
-    .toLowerCase();
+export function billingOwnerKey(owner: BillingOwner) {
+  return `${owner.ownerType.toLowerCase()}:${owner.ownerId}`;
 }
 
-// Everything is scoped to an "owner": a Clerk org id for org workspaces, or a Clerk user id for
-// personal ones. Clerk prefixes its ids, so they can't collide.
 export const workspaceOwnerSelect = {
-  clerkOrgId: true,
-  creator: { select: { clerkId: true } },
+  organizationId: true,
+  creator: { select: { id: true } },
 } as const;
 
-export function workspaceOwnerId(workspace: {
-  clerkOrgId: string | null;
-  creator: { clerkId: string };
-}) {
-  return workspace.clerkOrgId ?? workspace.creator.clerkId;
-}
+type WorkspaceOwner = Prisma.WorkspaceGetPayload<{
+  select: typeof workspaceOwnerSelect;
+}>;
 
-// Org workspaces use their org's plan. Personal workspaces can use either the creator's plan
-// or the currently active org's plan, matching the plan shown in the app header.
-export async function getWorkspaceEntitlements(workspace: {
-  clerkOrgId: string | null;
-  creator: { clerkId: string };
-}) {
-  if (workspace.clerkOrgId) return getEntitlements(workspace.clerkOrgId);
+async function ownerForWorkspace(workspace: WorkspaceOwner): Promise<BillingOwner> {
+  if (workspace.organizationId) {
+    return {
+      ownerType: BillingOwnerType.ORGANIZATION,
+      ownerId: workspace.organizationId,
+    };
+  }
 
-  const personalEntitlements = await getEntitlements(workspace.creator.clerkId);
-  const { orgId } = await auth();
-  if (!orgId) return personalEntitlements;
-
-  const orgEntitlements = await getEntitlements(orgId);
   return {
-    isPaid: personalEntitlements.isPaid || orgEntitlements.isPaid,
-    promptLimit: Math.max(
-      personalEntitlements.promptLimit,
-      orgEntitlements.promptLimit,
-    ),
-    unlimitedWorkspaces:
-      personalEntitlements.unlimitedWorkspaces ||
-      orgEntitlements.unlimitedWorkspaces,
-    publicSharing:
-      personalEntitlements.publicSharing || orgEntitlements.publicSharing,
-    pdfExport: personalEntitlements.pdfExport || orgEntitlements.pdfExport,
+    ownerType: BillingOwnerType.USER,
+    ownerId: workspace.creator.id,
   };
 }
 
@@ -63,55 +41,94 @@ export async function getWorkspaceOwnerId(workspaceId: string) {
     where: { id: workspaceId },
     select: workspaceOwnerSelect,
   });
-  return workspaceOwnerId(workspace);
+  return ownerForWorkspace(workspace);
 }
 
-// The owner's plan features, looked up from Clerk on the server. This works for any owner, not
-// just the org selected in the viewer's switcher, and even for signed-out viewers (shared links).
-export async function getEntitlements(ownerId: string) {
-  const clerk = await clerkClient();
-  const isOrg = ownerId.startsWith("org_");
-  const features = new Set<string>();
-  let hasPaidPlan = false;
+export async function getEntitlements(owner: BillingOwner) {
+  const now = new Date();
+  await prisma.subscription.updateMany({
+    where: {
+      ownerType: owner.ownerType,
+      ownerId: owner.ownerId,
+      provider: "MANUAL",
+      status: {
+        in: [SubscriptionStatus.ACTIVE, SubscriptionStatus.TRIALING, SubscriptionStatus.PAST_DUE],
+      },
+      currentPeriodEnd: { lte: now },
+    },
+    data: { status: SubscriptionStatus.CANCELED, endedAt: now, cancelAtPeriodEnd: false },
+  });
+  await prisma.subscription.updateMany({
+    where: {
+      ownerType: owner.ownerType,
+      ownerId: owner.ownerId,
+      provider: { in: ["STRIPE", "RAZORPAY"] },
+      status: { in: [SubscriptionStatus.ACTIVE, SubscriptionStatus.TRIALING, SubscriptionStatus.PAST_DUE] },
+      cancelAtPeriodEnd: true,
+      currentPeriodEnd: { lte: now },
+    },
+    data: { status: SubscriptionStatus.CANCELED, endedAt: now, cancelAtPeriodEnd: false },
+  });
+  const subscription = await prisma.subscription.findFirst({
+    where: {
+      ownerType: owner.ownerType,
+      ownerId: owner.ownerId,
+      status: {
+        in: [
+          SubscriptionStatus.ACTIVE,
+          SubscriptionStatus.PAST_DUE,
+          SubscriptionStatus.TRIALING,
+        ],
+      },
+    },
+    include: { plan: true },
+    orderBy: { updatedAt: "desc" },
+  });
 
-  try {
-    const subscription = isOrg
-      ? await clerk.billing.getOrganizationBillingSubscription(ownerId)
-      : await clerk.billing.getUserBillingSubscription(ownerId);
-    for (const item of subscription.subscriptionItems) {
-      // past_due keeps access while Clerk retries the payment.
-      if (item.status === "active" || item.status === "past_due") {
-        if (item.plan && !item.plan.isDefault) hasPaidPlan = true;
-        item.plan?.features.forEach((feature) =>
-          features.add(normalizeFeatureSlug(feature.slug)),
-        );
-      }
-    }
-  } catch {
-    // No subscription (or Clerk unreachable): treat as the free plan.
-  }
-
-  const paid = PROMPT_FEATURES.find(({ feature }) => features.has(feature));
-  const isPaid = hasPaidPlan || !!paid;
-  let promptLimit = FREE_MONTHLY_PROMPTS;
-  if (paid) {
-    const members = isOrg
-      ? ((
-          await clerk.organizations.getOrganization({
-            organizationId: ownerId,
-            includeMembersCount: true,
-          })
-        ).membersCount ?? 1)
+  const members =
+    owner.ownerType === BillingOwnerType.ORGANIZATION
+      ? await prisma.member.count({ where: { organizationId: owner.ownerId } })
       : 1;
-    promptLimit = paid.perMember * members;
-  }
+  const plan = subscription?.plan;
+  const promptLimit = plan
+    ? plan.monthlyPromptLimit * (owner.ownerType === BillingOwnerType.ORGANIZATION ? Math.max(1, members) : 1)
+    : FREE_MONTHLY_PROMPTS;
 
   return {
-    isPaid,
+    isPaid: Boolean(plan && (plan.monthlyPrice > 0 || plan.yearlyPrice > 0)),
+    planName: plan?.name ?? "Free",
     promptLimit,
-    unlimitedWorkspaces: features.has("unlimited_workspaces"),
-    publicSharing: features.has("public_sharing") || hasPaidPlan,
-    pdfExport: features.has("pdf_export"),
+    workspaceLimit: plan?.unlimitedWorkspaces ? null : plan?.workspaceLimit ?? FREE_WORKSPACE_LIMIT,
+    unlimitedWorkspaces: plan?.unlimitedWorkspaces ?? false,
+    publicSharing: plan?.publicSharing ?? false,
+    pdfExport: plan?.pdfExport ?? false,
+  };
+}
+
+export async function getWorkspaceEntitlements(workspace: WorkspaceOwner) {
+  const owner = await ownerForWorkspace(workspace);
+  const entitlements = await getEntitlements(owner);
+  if (owner.ownerType === BillingOwnerType.ORGANIZATION) return entitlements;
+
+  const session = await getCurrentSession();
+  const organizationId = session?.session.activeOrganizationId;
+  if (!session || !organizationId) return entitlements;
+  const membership = await prisma.member.findUnique({
+    where: { organizationId_userId: { organizationId, userId: session.user.id } },
+    select: { organizationId: true },
+  });
+  if (!membership) return entitlements;
+  const organizationEntitlements = await getEntitlements({
+    ownerType: BillingOwnerType.ORGANIZATION,
+    ownerId: organizationId,
+  });
+  return {
+    ...entitlements,
+    isPaid: entitlements.isPaid || organizationEntitlements.isPaid,
+    promptLimit: Math.max(entitlements.promptLimit, organizationEntitlements.promptLimit),
+    unlimitedWorkspaces: entitlements.unlimitedWorkspaces || organizationEntitlements.unlimitedWorkspaces,
+    publicSharing: entitlements.publicSharing || organizationEntitlements.publicSharing,
+    pdfExport: entitlements.pdfExport || organizationEntitlements.pdfExport,
   };
 }
 
@@ -120,21 +137,29 @@ function startOfMonthUtc() {
   return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
 }
 
-// This month's prompts against the owner's allowance.
-export async function getPromptUsage(ownerId: string) {
-  const [{ promptLimit, isPaid }, used] = await Promise.all([
-    getEntitlements(ownerId),
+export async function getPromptUsage(owner: BillingOwner) {
+  const [{ promptLimit, isPaid, planName }, used] = await Promise.all([
+    getEntitlements(owner),
     prisma.agentPrompt.count({
-      where: { ownerId, createdAt: { gte: startOfMonthUtc() } },
+      where: {
+        ownerId: billingOwnerKey(owner),
+        createdAt: { gte: startOfMonthUtc() },
+      },
     }),
   ]);
-  return { used, limit: promptLimit, isPaid };
+  return { used, limit: promptLimit, isPaid, planName };
 }
 
 export async function recordPrompt(
-  ownerId: string,
+  owner: BillingOwner,
   userId: string,
   workspaceId: string,
 ) {
-  await prisma.agentPrompt.create({ data: { ownerId, userId, workspaceId } });
+  await prisma.agentPrompt.create({
+    data: {
+      ownerId: billingOwnerKey(owner),
+      userId,
+      workspaceId,
+    },
+  });
 }

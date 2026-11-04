@@ -1,8 +1,9 @@
 "use server";
 
-import { FREE_WORKSPACE_LIMIT, LimitError } from "@/lib/plan-limits";
+import { LimitError } from "@/lib/plan-limits";
 import { checkUser } from "./check-user";
-import { auth } from "@clerk/nextjs/server";
+import { BillingOwnerType } from "@/lib/generated/prisma/enums";
+import { getActiveOrganization } from "@/lib/auth/organization";
 import { getWorkspaceScope, scopeWhere } from "@/lib/workspace-scope";
 import {
   getEntitlements,
@@ -14,7 +15,8 @@ import { revalidatePath } from "next/cache";
 import { withLastActivity, workspaceCardSelect } from "@/lib/workspace-status";
 import { WorkspaceCardData } from "@/components/workspaceCard";
 import { WorkspaceStatus } from "@/lib/generated/prisma/enums";
-import { canAccessWorkspace } from "@/lib/workspace-access";
+import { canAccessWorkspace, getWorkspaceAccess } from "@/lib/workspace-access";
+import { canManageOrganization } from "@/lib/auth/permissions";
 import { Prisma } from "@/lib/generated/prisma/client";
 import { randomBytes } from "node:crypto";
 
@@ -76,8 +78,8 @@ export async function getWorkspaces(): Promise<{
 export async function getWorkspace(workspaceId: string): Promise<{
   name: string;
   shareToken: string | null;
-  clerkOrgId: string | null;
-  creator: { clerkId: string };
+  organizationId: string | null;
+  creator: { id: string };
   canvas: { content: Prisma.JsonValue } | null;
   agentChat: { messages: Prisma.JsonValue } | null;
   doc: {
@@ -129,14 +131,20 @@ export async function createWorkspace(
 
   // Belongs to whicever org is active; no active org means a personal workspace
 
-  const { orgId } = await auth();
-  const scope = scopeWhere(orgId, user.id);
+  const organization = await getActiveOrganization();
+  const scope = scopeWhere(organization?.id, user.id);
+  const owner = organization
+    ? {
+        ownerType: BillingOwnerType.ORGANIZATION,
+        ownerId: organization.id,
+      }
+    : { ownerType: BillingOwnerType.USER, ownerId: user.id };
 
-  const { unlimitedWorkspaces } = await getEntitlements(orgId ?? user.clerkId);
+  const { unlimitedWorkspaces, workspaceLimit } = await getEntitlements(owner);
 
   if (
     !unlimitedWorkspaces &&
-    (await prisma.workspace.count({ where: scope })) >= FREE_WORKSPACE_LIMIT
+    (await prisma.workspace.count({ where: scope })) >= (workspaceLimit ?? 0)
   ) {
     return { limit: "workspaces" };
   }
@@ -152,7 +160,7 @@ export async function createWorkspace(
       name: trimedName,
       description: description?.trim() || null,
       creatorId: user.id,
-      clerkOrgId: orgId || null,
+      organizationId: organization?.id ?? null,
       position: top ? top.position - 1 : 0,
       doc: { create: {} },
       canvas: { create: {} },
@@ -193,21 +201,12 @@ export async function updateWorkspace(
 
 // Any org member can delete a workspace, but only the creator and org admins can delete a workspace.
 export async function deleteWorkspace(workspaceId: string) {
-  const { userId, orgId, orgRole } = await auth();
+  const access = await getWorkspaceAccess(workspaceId);
+  if (!access) throw new Error("workspace not found or access denied");
 
-  if (!userId || !canAccessWorkspace(workspaceId)) {
-    throw new Error("workspace not found or access denied");
-  }
+  const isOrgAdmin = canManageOrganization(access.role);
 
-  const workspace = await prisma.workspace.findUniqueOrThrow({
-    where: { id: workspaceId },
-    select: workspaceOwnerSelect,
-  });
-
-  const isCreator = workspace.creator.clerkId === userId;
-  const isOrgAdmin = orgRole === "org:admin" && workspace.clerkOrgId === orgId;
-
-  if (!isCreator && !isOrgAdmin) {
+  if (!access.isCreator && !isOrgAdmin) {
     throw new Error("You do not have permission to delete this workspace");
   }
 
@@ -233,7 +232,7 @@ export async function moveWorkspacePosition(
     throw new Error("Invalid status or position");
   }
 
-  if (!canAccessWorkspace(workspaceId)) {
+  if (!(await canAccessWorkspace(workspaceId))) {
     throw new Error("workspace not found or access denied");
   }
 

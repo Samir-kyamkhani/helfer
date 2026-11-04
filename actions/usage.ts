@@ -1,11 +1,25 @@
 "use server";
 
-import { auth } from "@clerk/nextjs/server";
-import { getPromptUsage } from "@/lib/billing";
+import { BillingOwnerType } from "@/lib/generated/prisma/enums";
+import { getPromptUsage, type BillingOwner } from "@/lib/billing";
+import { getActiveOrganization } from "@/lib/auth/organization";
+import { getCurrentSession } from "@/lib/auth/session";
 
 // Usage for the header: the selected org, or the personal account.
 export async function getActivePromptUsage() {
-  const { userId, orgId } = await auth();
-  if (!userId) return null;
-  return getPromptUsage(orgId ?? userId);
+  const session = await getCurrentSession();
+  if (!session) return null;
+
+  const organization = await getActiveOrganization();
+  const owner: BillingOwner = organization
+    ? {
+        ownerType: BillingOwnerType.ORGANIZATION,
+        ownerId: organization.id,
+      }
+    : {
+        ownerType: BillingOwnerType.USER,
+        ownerId: session.user.id,
+      };
+
+  return getPromptUsage(owner);
 }

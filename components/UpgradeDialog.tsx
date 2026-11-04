@@ -1,6 +1,6 @@
 "use client";
 
-import { PricingTable, useAuth } from "@clerk/nextjs";
+import Link from "next/link";
 import React from "react";
 import {
   Dialog,
@@ -8,49 +8,41 @@ import {
   DialogDescription,
   DialogHeader,
   DialogTitle,
-} from "./ui/dialog";
+} from "@/components/ui/dialog";
+import { Button } from "@/components/ui/button";
 
 type UpgradeReason = { title: string; description?: string };
 
-const defaultReason = {
+const defaultReason: UpgradeReason = {
   title: "Upgrade your plan",
   description:
-    "Get more agents prompt, unlimited workspaces, shared links and pdf exports.",
+    "Get more agent prompts, unlimited workspaces, shared links, and PDF exports.",
 };
 
-const upgradeDialogContext = React.createContext<
-  (Reason?: UpgradeReason | null) => void
->(() => {});
+const upgradeDialogContext = React.createContext<(reason?: UpgradeReason | null) => void>(
+  () => {},
+);
 
-export function UpgradeDialogProvider({
-  children,
-}: {
-  children: React.ReactNode;
-}) {
+export function UpgradeDialogProvider({ children }: { children: React.ReactNode }) {
   const [reason, setReason] = React.useState<UpgradeReason | null>(null);
-  const { orgId } = useAuth();
-  const closeDialog = React.useCallback(() => setReason(null), []);
 
   return (
-    <upgradeDialogContext.Provider
-      value={(next) => setReason(next ?? defaultReason)}
-    >
+    <upgradeDialogContext.Provider value={(next) => setReason(next ?? defaultReason)}>
       {children}
-
-      <Dialog
-        modal={false}
-        open={reason !== null}
-        onOpenChange={(open) => !open && closeDialog()}
-      >
-        <DialogContent className="max-h-[90dvh] overflow-y-auto sm:max-w-5xl">
-          <DialogHeader className="items-center text-center">
-            <DialogTitle className="text-2x1">{reason?.title}</DialogTitle>
-            {reason?.description && (
-              <DialogDescription>{reason.description}</DialogDescription>
-            )}
+      <Dialog open={reason !== null} onOpenChange={(open) => !open && setReason(null)}>
+        <DialogContent className="max-h-[90dvh] overflow-y-auto sm:max-w-xl">
+          <DialogHeader>
+            <DialogTitle>{reason?.title}</DialogTitle>
+            {reason?.description && <DialogDescription>{reason.description}</DialogDescription>}
           </DialogHeader>
-
-          <PricingTable for={orgId ? "organization" : "user"} />
+          <p className="text-sm text-muted-foreground">
+            Compare the plans available for your account or active organization.
+          </p>
+          <Button asChild>
+            <Link href="/pricing" onClick={() => setReason(null)}>
+              Compare plans
+            </Link>
+          </Button>
         </DialogContent>
       </Dialog>
     </upgradeDialogContext.Provider>

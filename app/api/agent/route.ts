@@ -70,12 +70,12 @@ export async function POST(req: Request) {
 
   // Only a message the user typed counts as a prompt; the automatic follow-ups after tool calls end with the agent's own message, so a prompt that draws 20 shapes still counts once.
 
-  let ownerId: string | null = null;
+  let owner: Awaited<ReturnType<typeof getWorkspaceOwnerId>> | null = null;
 
   if (messages.at(-1)?.role === "user") {
-    ownerId = await getWorkspaceOwnerId(workspaceId);
+    owner = await getWorkspaceOwnerId(workspaceId);
 
-    const { used, limit } = await getPromptUsage(ownerId);
+    const { used, limit } = await getPromptUsage(owner);
     // Checked before calling Gemini, so an exhausted plan costs nothing.
 
     if (used >= limit)
@@ -97,7 +97,7 @@ export async function POST(req: Request) {
     },
     // Charged only once Gemini answers, so a failed request (e.g. high demand) costs nothing.
     onFinish: async () => {
-      if (ownerId) await recordPrompt(ownerId, user.id, workspaceId);
+      if (owner) await recordPrompt(owner, user.id, workspaceId);
     },
   });
 

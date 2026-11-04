@@ -10,8 +10,6 @@ import { cn } from "@/lib/utils";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { Toaster } from "@/components/ui/sonner";
 import AppShell from "@/components/AppShell";
-import { dark } from "@clerk/ui/themes";
-import { ClerkProvider } from "@clerk/nextjs";
 import { UpgradeDialogProvider } from "@/components/UpgradeDialog";
 
 const ibmPlexSans = IBM_Plex_Sans({
@@ -45,33 +43,26 @@ export const metadata: Metadata = {
 
 export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
-    <ClerkProvider
-      appearance={{
-        theme: dark,
-        variables: { colorPrimary: "oklch(0.74 0.16 55)" },
-      }}
+    <html
+      lang="en"
+      className={cn(
+        "h-full",
+        "antialiased",
+        geistSans.variable,
+        geistMono.variable,
+        bricolage.variable,
+        "font-sans",
+        ibmPlexSans.variable,
+      )}
     >
-      <html
-        lang="en"
-        className={cn(
-          "h-full",
-          "antialiased",
-          geistSans.variable,
-          geistMono.variable,
-          bricolage.variable,
-          "font-sans",
-          ibmPlexSans.variable,
-        )}
-      >
-        <body className="min-h-full flex flex-col">
-          <TooltipProvider>
-            <UpgradeDialogProvider>
-              <AppShell>{children}</AppShell>
-            </UpgradeDialogProvider>
-          </TooltipProvider>
-          <Toaster richColors />
-        </body>
-      </html>
-    </ClerkProvider>
+      <body className="min-h-full flex flex-col">
+        <TooltipProvider>
+          <UpgradeDialogProvider>
+            <AppShell>{children}</AppShell>
+          </UpgradeDialogProvider>
+        </TooltipProvider>
+        <Toaster richColors />
+      </body>
+    </html>
   );
 }

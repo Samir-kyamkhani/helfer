@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect } from "react";
-import { useUser } from "@clerk/nextjs";
+import { authClient } from "@/lib/auth-client";
 import * as Y from "yjs";
 import { useCreateBlockNote } from "@blocknote/react";
 import { BlockNoteView } from "@blocknote/mantine";
@@ -30,7 +30,8 @@ export function DocEditor({
   initialContent,
   initialState,
 }: DocEditorProps) {
-  const { user } = useUser();
+  const { data: session } = authClient.useSession();
+  const user = session?.user;
   const collab = useCollaborativeDoc(workspaceId, initialState);
 
   if (!collab || !user) {
@@ -40,6 +41,9 @@ export function DocEditor({
       </div>
     );
   }
+  if ("error" in collab) {
+    return <div role="alert" className="p-6 text-sm text-destructive">{collab.error}</div>;
+  }
 
   return (
     <CollaborativeEditor
@@ -48,7 +52,7 @@ export function DocEditor({
       doc={collab.doc}
       provider={collab.provider}
       user={{
-        name: user.fullName ?? user.username ?? "Anonymous",
+        name: user.name ?? "Anonymous",
         color: colorForUser(user.id),
       }}
     />

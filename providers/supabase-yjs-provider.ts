@@ -6,7 +6,7 @@ import {
   removeAwarenessStates,
 } from "y-protocols/awareness";
 import type { RealtimeChannel } from "@supabase/supabase-js";
-import { supabase } from "@/lib/supabase";
+import type { createWorkspaceRealtimeClient } from "@/lib/supabase";
 import { fromBase64, toBase64 } from "@/lib/base64";
 
 const PEER_SYNC_WAIT_MS = 500;
@@ -15,9 +15,8 @@ const PEER_SYNC_WAIT_MS = 500;
 // Three broadcast events: "update" (doc changes), "awareness" (cursors/names) and "sync-request"
 // (a newcomer asking peers for their full state, to catch up on unsaved edits).
 //
-// Tutorial scope: this is a public channel, so anyone with the anon key and the doc id could join.
-// For production, use a private channel with Supabase Realtime Authorization (RLS on
-// realtime.messages) and sign clients in with their Clerk session token.
+// Workspace channels are private. The Supabase access-token callback requests a short-lived JWT
+// from the server, which rechecks Better Auth identity and local workspace membership.
 export class SupabaseYjsProvider {
   readonly awareness: Awareness;
   private channel: RealtimeChannel;
@@ -31,10 +30,11 @@ export class SupabaseYjsProvider {
     private doc: Y.Doc,
     roomId: string,
     private onReady: () => void,
+    private supabase: ReturnType<typeof createWorkspaceRealtimeClient>,
   ) {
     this.awareness = new Awareness(doc);
     this.channel = supabase.channel(`doc:${roomId}`, {
-      config: { broadcast: { self: false } },
+      config: { private: true, broadcast: { self: false } },
     });
 
     this.channel
@@ -113,6 +113,6 @@ export class SupabaseYjsProvider {
     this.doc.off("update", this.handleDocUpdate);
     this.awareness.off("update", this.handleAwarenessUpdate);
     this.awareness.destroy();
-    supabase.removeChannel(this.channel);
+    this.supabase.removeChannel(this.channel);
   }
 }

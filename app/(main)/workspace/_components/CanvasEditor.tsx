@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useRef } from "react";
-import { useUser } from "@clerk/nextjs";
+import { authClient } from "@/lib/auth-client";
 import {
   Tldraw,
   atom,
@@ -82,13 +82,14 @@ export function CanvasEditor({
 }) {
   const saveTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
   const { setCanvasEditor } = useWorkspaceEditors();
-  const { user } = useUser();
+  const { data: session } = authClient.useSession();
+  const user = session?.user;
 
   // Gives other collaborators this user's real name/avatar on their cursor instead of "New User".
   // Memoized on primitives because useSync reconnects whenever the users object changes.
   const userId = user?.id;
-  const userName = user?.fullName ?? user?.username ?? "Anonymous";
-  const userImageUrl = user?.imageUrl ?? "";
+  const userName = user?.name ?? "Anonymous";
+  const userImageUrl = user?.image ?? "";
   const users = useMemo(() => {
     if (!userId) return undefined;
     return {
@@ -105,11 +106,11 @@ export function CanvasEditor({
   }, [userId, userName, userImageUrl]);
 
   // The editor's own identity (people menu, your own cursor) is separate from what gets synced —
-  // pin its name/color to Clerk too, keeping every other preference from tldraw's local storage.
+  // pin its name/color to the signed-in Helfer user, keeping other local preferences.
   const currentUser = useMemo(() => {
     if (!userId) return undefined;
     return createTLCurrentUser({
-      userPreferences: computed("clerkUserPreferences", () => ({
+      userPreferences: computed("helferUserPreferences", () => ({
         ...getUserPreferences(),
         id: userId,
         name: userName,

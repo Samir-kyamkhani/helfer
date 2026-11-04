@@ -1,30 +1,45 @@
-import { auth, clerkClient } from "@clerk/nextjs/server";
-import { workspaceOwnerSelect } from "./billing";
-import { prisma } from "./prisma";
+import { getCurrentSession } from "@/lib/auth/session";
+import { prisma } from "@/lib/prisma";
 
-// Org workspace are open to all members of the org, while personal workspaces are only open to the creator.
-export async function canAccessWorkspace(workspaceId: string) {
-  const { orgId, userId } = await auth();
-
-  if (!userId) return false;
+export async function getWorkspaceAccess(workspaceId: string) {
+  const session = await getCurrentSession();
+  if (!session) return null;
 
   const workspace = await prisma.workspace.findUnique({
     where: { id: workspaceId },
-    select: workspaceOwnerSelect,
+    select: {
+      creatorId: true,
+      organizationId: true,
+    },
+  });
+  if (!workspace) return null;
+
+  const isCreator = workspace.creatorId === session.user.id;
+  if (!workspace.organizationId) {
+    return isCreator
+      ? { allowed: true, isCreator, role: null, organizationId: null }
+      : null;
+  }
+
+  const membership = await prisma.member.findUnique({
+    where: {
+      organizationId_userId: {
+        organizationId: workspace.organizationId,
+        userId: session.user.id,
+      },
+    },
+    select: { role: true },
   });
 
-  if (!workspace) return false;
+  if (!membership) return null;
+  return {
+    allowed: true,
+    isCreator,
+    role: membership.role,
+    organizationId: workspace.organizationId,
+  };
+}
 
-  if (!workspace.clerkOrgId) return workspace.creator.clerkId === userId;
-  if (workspace.clerkOrgId === orgId) return true;
-
-  // The session only knows the active org, so we need to check if the user is a member of the workspace's org.
-  const clerk = await clerkClient();
-
-  const { data: membership } = await clerk.users.getOrganizationMembershipList({
-    userId: userId,
-    limit: 100,
-  });
-
-  return membership.some((m) => m.organization.id === workspace.clerkOrgId);
+export async function canAccessWorkspace(workspaceId: string) {
+  return Boolean(await getWorkspaceAccess(workspaceId));
 }

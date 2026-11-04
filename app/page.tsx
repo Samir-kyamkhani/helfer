@@ -13,8 +13,6 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { landingCopy } from "./_data/landing";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { PricingTable } from "@clerk/nextjs";
 
 type LandingFeature = (typeof landingCopy.features.rows)[number];
 type LandingStep = (typeof landingCopy.howItWorks.steps)[number];
@@ -33,9 +31,6 @@ const stepIcons: Record<LandingStep["id"], LucideIcon> = {
   draw: Workflow,
   iterate: UsersRound,
 };
-
-const PRICINGTAB =
-  "rounded-full px-5 py-1.5 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground dark:data-[state=active]:bg-primary dark:data-[state=active]:text-primary-foreground";
 
 function PreviewHeader({
   workspace,
@@ -485,28 +480,13 @@ export default function Home() {
             <h2 className="font-heading text-4xl font-semibold tracking-[-0.04em] sm:text-5xl">
               {pricing.heading}
             </h2>
-            <div className="mt-10 w-full rounded-2xl border border-dashed border-white/15 bg-white/1.5 px-3 py-8 sm:px-3 sm:py-10 lg:px-6 lg:py-12">
-              <Tabs
-                defaultValue="user"
-                className="mx-auto flex w-full min-w-0 flex-col items-center gap-10"
-              >
-                <TabsList className="h-auto rounded-full border border-white/10 bg-white/5 p-1">
-                  <TabsTrigger value="user" className={PRICINGTAB}>
-                    Personal
-                  </TabsTrigger>
-                  <TabsTrigger value="organization" className={PRICINGTAB}>
-                    Team
-                  </TabsTrigger>
-                </TabsList>
-
-                <TabsContent value="user" className="w-full min-w-0">
-                  <PricingTable for="user" />
-                </TabsContent>
-
-                <TabsContent value="organization" className="w-full min-w-0">
-                  <PricingTable for="organization" />
-                </TabsContent>
-              </Tabs>
+            <div className="mt-10 flex w-full flex-col items-center gap-4 rounded-2xl border border-dashed border-white/15 bg-white/1.5 px-6 py-10 sm:py-14">
+              <p className="max-w-xl text-pretty text-sm leading-6 text-muted-foreground sm:text-base">
+                Start with a free personal workspace, then choose a plan for your account or team as your work grows.
+              </p>
+              <Button asChild size="lg" className="rounded-xl px-6">
+                <Link href="/pricing">Compare plans</Link>
+              </Button>
             </div>
           </div>
         </section>

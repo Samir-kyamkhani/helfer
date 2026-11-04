@@ -1,8 +1,3 @@
-// This is your Prisma schema file,
-// learn more about it in the docs: https://pris.ly/d/prisma-schema
-
-// Get a free hosted Postgres database in seconds: `npx create-db`
-
 generator client {
   provider = "prisma-client"
   output   = "../lib/generated/prisma"
@@ -13,19 +8,349 @@ datasource db {
 }
 
 model User {
-  id       String @id @default(cuid())
-  clerkId  String @unique @map("clerk_id")
-  email    String @unique
-  name     String
-  imageUrl String @map("image_url")
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  // Workspace this user created - memebership/roles for all worksapces live in clerk organizations, not here, so this is just "who to blame/bill" rather than an access-controll source of truth.
-
-  createdWorkspaces Workspace[]
+  id                String        @id @default(cuid())
+  email             String        @unique
+  emailVerified     Boolean       @default(false)
+  name              String
+  image             String?       @map("image_url")
+  createdAt         DateTime      @default(now())
+  updatedAt         DateTime      @updatedAt
+  twoFactorEnabled  Boolean       @default(false) @map("two_factor_enabled")
+  accounts          Account[]
   agentPrompts      AgentPrompt[]
+  invitationsSent   Invitation[]
+  memberships       Member[]
+  sessions          Session[]
+  twoFactor         TwoFactor?
+  createdWorkspaces Workspace[]
+}
+
+model Session {
+  id                   String   @id @default(cuid())
+  expiresAt            DateTime
+  token                String   @unique
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+  ipAddress            String?
+  userAgent            String?
+  userId               String   @map("user_id")
+  activeOrganizationId String?  @map("active_organization_id")
+  user                 User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+model Account {
+  id                    String    @id @default(cuid())
+  accountId             String    @map("account_id")
+  providerId            String    @map("provider_id")
+  userId                String    @map("user_id")
+  accessToken           String?   @map("access_token")
+  refreshToken          String?   @map("refresh_token")
+  idToken               String?   @map("id_token")
+  accessTokenExpiresAt  DateTime? @map("access_token_expires_at")
+  refreshTokenExpiresAt DateTime? @map("refresh_token_expires_at")
+  scope                 String?
+  password              String?
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+  user                  User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+model Verification {
+  id         String   @id @default(cuid())
+  identifier String
+  value      String
+  expiresAt  DateTime
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@index([identifier])
+}
+
+model TwoFactor {
+  id                      String    @id @default(cuid())
+  secret                  String
+  backupCodes             String    @map("backup_codes")
+  userId                  String    @unique @map("user_id")
+  verified                Boolean   @default(true)
+  failedVerificationCount Int       @default(0) @map("failed_verification_count")
+  lockedUntil             DateTime? @map("locked_until")
+  user                    User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model Workspace {
+  id             String            @id @default(cuid())
+  name           String
+  description    String?
+  creatorId      String            @map("creator_id")
+  organizationId String?           @map("organization_id")
+  status         WorkspaceStatus   @default(PLANNING)
+  position       Float             @default(0)
+  shareToken     String?           @unique @map("share_token")
+  createdAt      DateTime          @default(now())
+  updatedAt      DateTime          @updatedAt
+  agentChat      AgentChatHistory?
+  agentPrompt    AgentPrompt[]
+  canvas         Canvas?
+  doc            Doc?
+  creator        User              @relation(fields: [creatorId], references: [id], onDelete: Cascade)
+  organization   Organization?     @relation(fields: [organizationId], references: [id])
+
+  @@index([creatorId])
+  @@index([organizationId])
+}
+
+model Organization {
+  id          String       @id @default(cuid())
+  name        String
+  slug        String       @unique
+  logo        String?
+  metadata    String?
+  createdAt   DateTime     @default(now())
+  invitations Invitation[]
+  members     Member[]
+  workspaces  Workspace[]
+}
+
+model Member {
+  id             String       @id @default(cuid())
+  organizationId String       @map("organization_id")
+  userId         String       @map("user_id")
+  role           String
+  createdAt      DateTime     @default(now())
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  user           User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([organizationId, userId])
+  @@index([userId])
+}
+
+model Invitation {
+  id             String       @id @default(cuid())
+  organizationId String       @map("organization_id")
+  email          String
+  role           String
+  status         String       @default("pending")
+  expiresAt      DateTime     @map("expires_at")
+  inviterId      String       @map("inviter_id")
+  createdAt      DateTime     @default(now())
+  inviter        User         @relation(fields: [inviterId], references: [id], onDelete: Cascade)
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@index([email])
+  @@index([organizationId, status])
+}
+
+model Doc {
+  id          String    @id @default(cuid())
+  workspaceId String    @unique @map("workspace_id")
+  content     Json?
+  yjsState    Bytes?    @map("yjs_state")
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+}
+
+model Canvas {
+  id          String    @id @default(cuid())
+  workspaceId String    @unique @map("workspace_id")
+  content     Json?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+}
+
+model AgentPrompt {
+  id          String     @id @default(cuid())
+  ownerId     String
+  userId      String
+  workspaceId String?    @map("workspace_id")
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+  user        User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  workspace   Workspace? @relation(fields: [workspaceId], references: [id])
+
+  @@index([ownerId, createdAt])
+}
+
+model AgentChatHistory {
+  id          String    @id @default(cuid())
+  workspaceId String    @unique @map("workspace_id")
+  messages    Json
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+}
+
+model SubscriptionPlan {
+  id                    String         @id
+  name                  String
+  description           String?
+  currency              String         @default("INR")
+  monthlyPrice          Int            @default(0) @map("monthly_price")
+  yearlyPrice           Int            @default(0) @map("yearly_price")
+  monthlyPromptLimit    Int            @default(100) @map("monthly_prompt_limit")
+  workspaceLimit        Int?           @default(3) @map("workspace_limit")
+  unlimitedWorkspaces   Boolean        @default(false) @map("unlimited_workspaces")
+  publicSharing         Boolean        @default(false) @map("public_sharing")
+  pdfExport             Boolean        @default(false) @map("pdf_export")
+  active                Boolean        @default(true)
+  sortOrder             Int            @default(0) @map("sort_order")
+  stripeProductId       String?        @map("stripe_product_id")
+  stripeMonthlyPriceId  String?        @map("stripe_monthly_price_id")
+  stripeYearlyPriceId   String?        @map("stripe_yearly_price_id")
+  razorpayMonthlyPlanId String?        @map("razorpay_monthly_plan_id")
+  razorpayYearlyPlanId  String?        @map("razorpay_yearly_plan_id")
+  razorpayMonthlyCycles Int?           @map("razorpay_monthly_cycles")
+  razorpayYearlyCycles  Int?           @map("razorpay_yearly_cycles")
+  createdAt             DateTime       @default(now())
+  updatedAt             DateTime       @updatedAt
+  subscriptions         Subscription[]
+}
+
+model BillingCustomer {
+  id                 String           @id @default(cuid())
+  ownerType          BillingOwnerType @map("owner_type")
+  ownerId            String           @map("owner_id")
+  provider           PaymentProvider
+  providerCustomerId String           @map("provider_customer_id")
+  email              String
+  createdAt          DateTime         @default(now())
+  updatedAt          DateTime         @updatedAt
+
+  @@unique([ownerType, ownerId, provider])
+  @@unique([provider, providerCustomerId])
+  @@index([ownerId])
+}
+
+model Subscription {
+  id                     String             @id @default(cuid())
+  ownerType              BillingOwnerType   @map("owner_type")
+  ownerId                String             @map("owner_id")
+  planId                 String             @map("plan_id")
+  provider               PaymentProvider
+  providerCustomerId     String             @map("provider_customer_id")
+  providerSubscriptionId String             @map("provider_subscription_id")
+  status                 SubscriptionStatus @default(INCOMPLETE)
+  interval               BillingInterval
+  currentPeriodStart     DateTime?          @map("current_period_start")
+  currentPeriodEnd       DateTime?          @map("current_period_end")
+  nextBillingDate        DateTime?          @map("next_billing_date")
+  cancelAtPeriodEnd      Boolean            @default(false) @map("cancel_at_period_end")
+  canceledAt             DateTime?          @map("canceled_at")
+  endedAt                DateTime?          @map("ended_at")
+  createdAt              DateTime           @default(now())
+  updatedAt              DateTime           @updatedAt
+  invoices               Invoice[]
+  payments               Payment[]
+  plan                   SubscriptionPlan   @relation(fields: [planId], references: [id])
+
+  @@unique([provider, providerSubscriptionId])
+  @@index([ownerType, ownerId, status])
+  @@index([planId])
+}
+
+model Payment {
+  id                String           @id @default(cuid())
+  ownerType         BillingOwnerType @map("owner_type")
+  ownerId           String           @map("owner_id")
+  subscriptionId    String?          @map("subscription_id")
+  provider          PaymentProvider
+  providerPaymentId String           @map("provider_payment_id")
+  amount            Int
+  currency          String
+  status            PaymentStatus
+  description       String?
+  paidAt            DateTime?        @map("paid_at")
+  createdAt         DateTime         @default(now())
+  subscription      Subscription?    @relation(fields: [subscriptionId], references: [id])
+
+  @@unique([provider, providerPaymentId])
+  @@index([ownerType, ownerId, createdAt])
+  @@index([subscriptionId])
+}
+
+model Invoice {
+  id                String           @id @default(cuid())
+  ownerType         BillingOwnerType @map("owner_type")
+  ownerId           String           @map("owner_id")
+  subscriptionId    String?          @map("subscription_id")
+  provider          PaymentProvider
+  providerInvoiceId String           @map("provider_invoice_id")
+  amountDue         Int              @map("amount_due")
+  amountPaid        Int              @map("amount_paid")
+  currency          String
+  status            String
+  hostedInvoiceUrl  String?          @map("hosted_invoice_url")
+  invoicePdfUrl     String?          @map("invoice_pdf_url")
+  periodStart       DateTime?        @map("period_start")
+  periodEnd         DateTime?        @map("period_end")
+  paidAt            DateTime?        @map("paid_at")
+  createdAt         DateTime         @default(now())
+  subscription      Subscription?    @relation(fields: [subscriptionId], references: [id])
+
+  @@unique([provider, providerInvoiceId])
+  @@index([ownerType, ownerId, createdAt])
+  @@index([subscriptionId])
+}
+
+model CheckoutAttempt {
+  id                     String           @id @default(cuid())
+  ownerType              BillingOwnerType @map("owner_type")
+  ownerId                String           @map("owner_id")
+  initiatedByUserId      String           @map("initiated_by_user_id")
+  planId                 String           @map("plan_id")
+  provider               PaymentProvider
+  interval               BillingInterval
+  providerCustomerId     String           @map("provider_customer_id")
+  providerCheckoutId     String           @map("provider_checkout_id")
+  providerSubscriptionId String?          @map("provider_subscription_id")
+  checkoutUrl            String?          @map("checkout_url")
+  couponCode             String?          @map("coupon_code")
+  status                 String           @default("pending")
+  createdAt              DateTime         @default(now())
+  updatedAt              DateTime         @updatedAt
+
+  @@unique([provider, providerCheckoutId])
+  @@index([ownerType, ownerId, status])
+  @@index([initiatedByUserId, createdAt])
+}
+
+model PaymentMethod {
+  id                      String           @id @default(cuid())
+  ownerType               BillingOwnerType @map("owner_type")
+  ownerId                 String           @map("owner_id")
+  provider                PaymentProvider
+  providerPaymentMethodId String           @map("provider_payment_method_id")
+  type                    String
+  brand                   String?
+  last4                   String?
+  expiryMonth             Int?             @map("expiry_month")
+  expiryYear              Int?             @map("expiry_year")
+  isDefault               Boolean          @default(false) @map("is_default")
+  createdAt               DateTime         @default(now())
+  updatedAt               DateTime         @updatedAt
+
+  @@unique([provider, providerPaymentMethodId])
+  @@index([ownerType, ownerId])
+}
+
+model PaymentEvent {
+  id              String          @id @default(cuid())
+  provider        PaymentProvider
+  externalEventId String          @map("external_event_id")
+  eventType       String          @map("event_type")
+  payload         Json
+  processedAt     DateTime?       @map("processed_at")
+  attempts        Int             @default(0)
+  lastError       String?         @map("last_error")
+  createdAt       DateTime        @default(now())
+
+  @@unique([provider, externalEventId])
+  @@index([processedAt, createdAt])
 }
 
 enum WorkspaceStatus {
@@ -35,95 +360,37 @@ enum WorkspaceStatus {
   DONE
 }
 
-model Workspace {
-  id          String  @id @default(cuid())
-  name        String
-  description String?
-  creatorId   String  @map("creator_id")
-  creator     User    @relation(fields: [creatorId], references: [id], onDelete: Cascade)
-
-  // personal workspace has no org behind it under Membership-optional mode.
-
-  clerkOrgId String? @map("clerk_org_id")
-
-  // Dashboard kanban coulmn + order within it. position is float so a dropped card can take the midpoint between its neighbers - only the moved card ever gets writen.
-
-  status   WorkspaceStatus @default(PLANNING)
-  position Float           @default(0)
-
-  // Public read only link token; null means sharing is off. Reseting it kills old links.
-
-  shareToken String? @unique @map("share_token")
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  // Every workspace is always exactly one doc + one canvas, paired - not a generic lists of surfaces. Both are created alongside  the workspace itself.
-
-  doc         Doc?
-  canvas      Canvas?
-  agentPrompt AgentPrompt[]
-  agentChat   AgentChatHistory?
-
-  @@index([creatorId])
-  @@index([clerkOrgId])
+enum BillingOwnerType {
+  USER
+  ORGANIZATION
 }
 
-model Doc {
-  id          String @id @default(cuid())
-  workspaceId String @unique @map("workspace_id")
-
-  // BlockNote block JSON - a readable copy for server side feature (agent, share, veiw).
-
-  content Json?
-
-  //YJS document state - the real-time collabration source of truth.
-
-  yjsState Bytes? @map("yjs_state")
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+enum PaymentProvider {
+  STRIPE
+  RAZORPAY
+  MANUAL
 }
 
-model Canvas {
-  id String @id @default(cuid())
-
-  workspaceId String @unique @map("workspace_id")
-
-  //tldraw shape/store snapshot.
-  content Json?
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+enum BillingInterval {
+  MONTHLY
+  YEARLY
 }
 
-model AgentPrompt {
-  id String @id @default(cuid())
-
-  // Who the prompt counts against: the workspace's Clerk Ord Id, or the clerk  User id for a personal workspace. Clerk prefixes ids ("org_", "user_"), so the two never cllide.
-
-  ownerId     String
-  userId      String
-  workspaceId String?  @map("workspace_id")
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
-
-  user      User       @relation(fields: [userId], references: [id], onDelete: Cascade)
-  workspace Workspace? @relation(fields: [workspaceId], references: [id], onDelete: SetNull)
-
-  @@index([ownerId, createdAt])
+enum SubscriptionStatus {
+  INCOMPLETE
+  TRIALING
+  ACTIVE
+  PAST_DUE
+  UNPAID
+  CANCELED
+  INCOMPLETE_EXPIRED
+  PAUSED
 }
 
-model AgentChatHistory {
-  id          String   @id @default(cuid())
-  workspaceId String   @unique @map("workspace_id")
-  messages    Json
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
-
-  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+enum PaymentStatus {
+  PENDING
+  SUCCEEDED
+  FAILED
+  REFUNDED
+  PARTIALLY_REFUNDED
 }
