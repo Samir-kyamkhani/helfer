@@ -13,6 +13,10 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { landingCopy } from "./_data/landing";
+import { listSubscriptionPlans } from "@/lib/payments/service";
+import { PricingPlans } from "@/components/billing/PricingPlans";
+import { Suspense } from "react";
+import { SuspenseFallback } from "@/components/SuspenseFallback";
 
 type LandingFeature = (typeof landingCopy.features.rows)[number];
 type LandingStep = (typeof landingCopy.howItWorks.steps)[number];
@@ -250,8 +254,39 @@ function SurfaceMockup({ feature }: { feature: LandingFeature }) {
   }
 }
 
+async function PricingSection() {
+  const plans = await listSubscriptionPlans();
+
+  return (
+    <div className="mx-auto w-full max-w-7xl">
+      <header className="mx-auto mb-10 max-w-2xl text-center">
+        <p className="font-mono text-[10px] uppercase tracking-[0.18em] text-primary">
+          Plans
+        </p>
+
+        <h2 className="mt-3 text-4xl font-semibold tracking-tight">
+          Choose the workspace that fits
+        </h2>
+
+        <p className="mt-4 text-muted-foreground">
+          Compare usage, collaboration, and export features. You can change a
+          paid plan from billing settings.
+        </p>
+      </header>
+
+      <PricingPlans plans={plans} />
+
+      <p className="mx-auto mt-8 max-w-2xl text-center text-xs text-muted-foreground">
+        Plan prices and provider products are managed in the billing catalog.
+        Paid checkout appears after the provider keys and product IDs are
+        configured.
+      </p>
+    </div>
+  );
+}
+
 export default function Home() {
-  const { hero, audience, features, howItWorks, pricing, closingCta, footer } =
+  const { hero, audience, features, howItWorks, closingCta, footer } =
     landingCopy;
 
   return (
@@ -473,22 +508,9 @@ export default function Home() {
           id="pricing"
           className="scroll-mt-20 border-t border-white/8 px-6 py-24 md:px-10 md:py-32"
         >
-          <div className="mx-auto w-full max-w-7xl text-center">
-            <p className="mb-4 font-mono text-[10px] font-medium uppercase tracking-[0.18em] text-primary">
-              {pricing.eyebrow}
-            </p>
-            <h2 className="font-heading text-4xl font-semibold tracking-[-0.04em] sm:text-5xl">
-              {pricing.heading}
-            </h2>
-            <div className="mt-10 flex w-full flex-col items-center gap-4 rounded-2xl border border-dashed border-white/15 bg-white/1.5 px-6 py-10 sm:py-14">
-              <p className="max-w-xl text-pretty text-sm leading-6 text-muted-foreground sm:text-base">
-                Start with a free personal workspace, then choose a plan for your account or team as your work grows.
-              </p>
-              <Button asChild size="lg" className="rounded-xl px-6">
-                <Link href="/pricing">Compare plans</Link>
-              </Button>
-            </div>
-          </div>
+          <Suspense fallback={<SuspenseFallback />}>
+            <PricingSection />
+          </Suspense>
         </section>
 
         <section className="topo-bg relative overflow-hidden px-6 py-20 md:px-10 md:py-28">
