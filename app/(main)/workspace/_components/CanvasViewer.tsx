@@ -25,7 +25,7 @@ export function CanvasViewer({
         snapshot={snapshot ?? undefined}
         onMount={setReadOnly}
         hideUi
-        colorScheme="dark"
+        colorScheme="light"
         shapeUtils={shapeUtils}
         licenseKey={process.env.NEXT_PUBLIC_TLDRAW_LICENSE_KEY}
       />

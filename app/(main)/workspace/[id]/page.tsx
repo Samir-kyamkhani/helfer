@@ -51,12 +51,12 @@ async function WorkspaceContent({
 
   return (
     <WorkspaceEditorsProvider>
-      <div className="flex h-dvh flex-col overflow-hidden">
-        <header className="flex h-14 shrink-0 items-center border-b border-white/6 bg-background px-4">
-          <div className="flex flex-1 items-center gap-3">
+      <div className="flex h-dvh flex-col overflow-hidden bg-background">
+        <header className="flex h-14 shrink-0 items-center gap-3 border-b border-border bg-card px-3 sm:px-4">
+          <div className="flex min-w-0 flex-1 items-center gap-2 sm:gap-3">
             <Link
               href="/dashboard"
-              className="flex size-8 items-center justify-center rounded-md transition-opacity hover:opacity-80"
+              className="flex size-8 shrink-0 items-center justify-center rounded-md transition-colors hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             >
               <Image
                 src="/brand/mascot-dark.png"
@@ -73,29 +73,42 @@ async function WorkspaceContent({
             />
           </div>
 
-          <div className="flex items-center gap-1 rounded-lg border border-white/10 bg-white/3 p-1">
-            {(["doc", "both", "canvas"] as const).map((mode) => (
-              <Button
-                key={mode}
-                asChild
-                variant={viewMode === mode ? "secondary" : "ghost"}
-                size="sm"
-                className="capitalize"
-              >
-                <Link
-                  href={
-                    mode === "both"
-                      ? `/workspace/${id}`
-                      : `/workspace/${id}?view=${mode}`
-                  }
+          {/* Segmented view switcher: the active segment is a raised white chip */}
+          <div
+            role="group"
+            aria-label="Workspace view"
+            className="flex items-center gap-0.5 rounded-lg border border-border bg-secondary p-0.5"
+          >
+            {(["doc", "both", "canvas"] as const).map((mode) => {
+              const active = viewMode === mode;
+              return (
+                <Button
+                  key={mode}
+                  asChild
+                  variant="ghost"
+                  size="sm"
+                  className={`capitalize ${
+                    active
+                      ? "bg-card text-foreground shadow-xs hover:bg-card"
+                      : "text-muted-foreground hover:bg-transparent hover:text-foreground"
+                  }`}
                 >
-                  {mode === "doc" ? "Document" : mode}
-                </Link>
-              </Button>
-            ))}
+                  <Link
+                    aria-current={active ? "page" : undefined}
+                    href={
+                      mode === "both"
+                        ? `/workspace/${id}`
+                        : `/workspace/${id}?view=${mode}`
+                    }
+                  >
+                    {mode === "doc" ? "Document" : mode}
+                  </Link>
+                </Button>
+              );
+            })}
           </div>
 
-          <div className="flex flex-1 items-center justify-end gap-2">
+          <div className="flex min-w-0 flex-1 items-center justify-end gap-2">
             <PlanButton upgradeOnlyWhenOut />
 
             <ShareDialog

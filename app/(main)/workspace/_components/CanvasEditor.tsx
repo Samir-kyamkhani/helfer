@@ -171,7 +171,7 @@ export function CanvasEditor({
         user={currentUser}
         onMount={handleMount}
         components={components}
-        colorScheme="dark"
+        colorScheme="light"
         shapeUtils={shapeUtils}
         licenseKey={process.env.NEXT_PUBLIC_TLDRAW_LICENSE_KEY}
       />

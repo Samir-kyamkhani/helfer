@@ -26,15 +26,18 @@ function EditableWorkspaceName({
       return;
     }
 
-    await updateWorkspaceNameFn(workspaceId, name);
+    setName(trimmedName);
+    await updateWorkspaceNameFn(workspaceId, trimmedName);
   };
 
   if (!isEditing) {
     return (
       <button
+        type="button"
         disabled={!!loading}
         onClick={() => setIsEditing(true)}
-        className="rounded-md px-1.5 py-0.5 text-sm font-medium transition-colors hover:bg-accent"
+        title="Rename workspace"
+        className="max-w-[40vw] truncate rounded-md px-2 py-1 text-sm font-medium text-foreground transition-colors hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-60 sm:max-w-xs"
       >
         {name}
       </button>
@@ -53,8 +56,9 @@ function EditableWorkspaceName({
           setIsEditing(false);
         }
       }}
+      aria-label="Workspace name"
       autoFocus
-      className="rounded-md border border-input bg-transparent px-1.5 py-0.5 text-sm font-medium outline-none focus:border-ring"
+      className="w-48 max-w-[50vw] rounded-md border border-input bg-card px-2 py-1 text-sm font-medium text-foreground shadow-xs outline-none transition-colors focus:border-brand focus:ring-2 focus:ring-ring"
     />
   );
 }

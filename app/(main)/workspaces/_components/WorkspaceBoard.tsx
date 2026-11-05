@@ -129,11 +129,15 @@ function WorkspaceBoard({ workspaces }: { workspaces: BoardWorkspace[] }) {
           return (
             <div
               key={column.status}
-              className="flex flex-col rounded-lg bg-white/3"
+              className="flex flex-col rounded-xl border border-border bg-surface"
             >
-              <div className="flex items-center gap-2 px-3 pt-3 pb-1 text-xs font-semibold tracking-wide text-muted-foreground uppercase">
-                {column.title}
-                <span className="font-normal">{columnWorkspaces.length}</span>
+              <div className="flex items-center justify-between gap-2 px-3.5 pt-3.5 pb-1.5">
+                <span className="text-xs font-semibold tracking-wide text-foreground/80 uppercase">
+                  {column.title}
+                </span>
+                <span className="rounded-full border border-border bg-card px-2 py-0.5 font-mono text-[10px] text-muted-foreground tabular-nums">
+                  {columnWorkspaces.length}
+                </span>
               </div>
 
               <Droppable droppableId={column.status}>
@@ -141,8 +145,8 @@ function WorkspaceBoard({ workspaces }: { workspaces: BoardWorkspace[] }) {
                   <div
                     ref={provided.innerRef}
                     {...provided.droppableProps}
-                    className={`flex min-h-40 flex-1 flex-col gap-1.5 rounded-b-lg p-2 transition-colors ${
-                      snapshot.isDraggingOver ? "bg-primary/5" : ""
+                    className={`flex min-h-40 flex-1 flex-col gap-2 rounded-b-xl p-2 transition-colors ${
+                      snapshot.isDraggingOver ? "bg-accent" : ""
                     }`}
                   >
                     {columnWorkspaces.map((workspace, index) => (
@@ -167,7 +171,7 @@ function WorkspaceBoard({ workspaces }: { workspaces: BoardWorkspace[] }) {
                                       variant="ghost"
                                       size="icon"
                                       aria-label="Workspace options"
-                                      className="absolute top-2 right-2 size-7 opacity-0 group-hover:opacity-100 focus-visible:opacity-100 data-[state=open]:opacity-100"
+                                      className="absolute top-2 right-2 size-7 text-muted-foreground opacity-0 group-hover:opacity-100 focus-visible:opacity-100 data-[state=open]:opacity-100"
                                     >
                                       <MoreHorizontal className="size-4" />
                                     </Button>
@@ -200,6 +204,7 @@ function WorkspaceBoard({ workspaces }: { workspaces: BoardWorkspace[] }) {
                         )}
                       </Draggable>
                     ))}
+                    {provided.placeholder}
                   </div>
                 )}
               </Droppable>

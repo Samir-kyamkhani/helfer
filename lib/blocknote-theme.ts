@@ -1,16 +1,20 @@
-// BlockNote's built-in "dark" theme ships its own (brownish) palette, not ours — override with
-// the app's actual tokens from globals.css so the doc panel matches the rest of the UI exactly.
-export const helferDarkTheme = {
+// BlockNote ships its own palette, not ours. Override it with the app's tokens from globals.css
+// (Snow White). Values are CSS variable references, so the doc panel follows the design system
+// automatically and there is no second set of colours to keep in sync.
+export const helferLightTheme = {
   colors: {
-    editor: { text: "oklch(0.98 0 0)", background: "oklch(0.12 0 0)" },
-    menu: { text: "oklch(0.98 0 0)", background: "oklch(0.17 0 0)" },
-    tooltip: { text: "oklch(0.98 0 0)", background: "oklch(0.17 0 0)" },
-    hovered: { text: "oklch(0.98 0 0)", background: "oklch(0.24 0 0)" },
-    selected: { text: "oklch(0.98 0 0)", background: "oklch(0.32 0 0)" },
-    disabled: { text: "oklch(0.72 0 0)", background: "oklch(0.24 0 0)" },
-    shadow: "oklch(0 0 0 / 30%)",
-    border: "oklch(1 0 0 / 10%)",
-    sideMenu: "oklch(0.72 0 0)",
+    editor: { text: "var(--foreground)", background: "var(--background)" },
+    menu: { text: "var(--popover-foreground)", background: "var(--popover)" },
+    tooltip: {
+      text: "var(--popover-foreground)",
+      background: "var(--popover)",
+    },
+    hovered: { text: "var(--accent-foreground)", background: "var(--accent)" },
+    selected: { text: "var(--foreground)", background: "var(--border)" },
+    disabled: { text: "var(--muted-foreground)", background: "var(--muted)" },
+    shadow: "oklch(0.25 0.01 265 / 12%)",
+    border: "var(--border)",
+    sideMenu: "var(--muted-foreground)",
     highlights: {},
   },
   borderRadius: 8,

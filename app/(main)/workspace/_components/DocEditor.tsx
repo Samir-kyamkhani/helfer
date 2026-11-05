@@ -12,7 +12,7 @@ import { saveDocContent } from "@/actions/doc";
 import type { Prisma } from "@/lib/generated/prisma/client";
 import { colorForUser } from "@/lib/utils";
 import { useWorkspaceEditors } from "@/providers/WorkspaceEditorsContext";
-import { helferDarkTheme } from "@/lib/blocknote-theme";
+import { helferLightTheme } from "@/lib/blocknote-theme";
 import { useCollaborativeDoc } from "@/hooks/use-collaborative-doc";
 import { SupabaseYjsProvider } from "@/providers/supabase-yjs-provider";
 import { toBase64 } from "@/lib/base64";
@@ -125,7 +125,7 @@ function CollaborativeEditor({
 
   return (
     <div className="h-full overflow-y-auto pt-6">
-      <BlockNoteView editor={editor} theme={helferDarkTheme} />
+      <BlockNoteView editor={editor} theme={helferLightTheme} />
     </div>
   );
 }

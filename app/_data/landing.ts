@@ -3,12 +3,12 @@ export const landingCopy = {
     eyebrow: "Early access",
     headline: {
       before: "An",
-      highlight: "helfer",
-      after: "for whatever",
-      finalLine: "you’re building",
+      highlight: "agent",
+      after: "that draws and writes",
+      finalLine: "in your workspace",
     },
     subtitle:
-      "A workspace where your team and an AI teammate can think, write, and build together.",
+      "Describe what you need. Helfer builds it on a canvas, in a doc, or both, and keeps the two consistent.",
     primaryAction: { label: "Start building free", href: "/sign-up" },
     secondaryAction: { label: "See how it works", href: "#how-it-works" },
     videoAlt: "Preview of the Helfer workspace",
@@ -25,21 +25,21 @@ export const landingCopy = {
     ],
   },
   features: {
-    eyebrow: "One connected way to work",
-    heading: "One agent, one workspace, your whole team",
+    eyebrow: "Two surfaces, one agent",
+    heading: "A canvas and a doc that stay in sync",
     subtitle:
-      "Move from the first sketch to a shared plan and keep the whole team in sync.",
+      "Helfer works directly on your workspace. It picks the right surface for the job, or you tell it where to work.",
     rows: [
       {
         id: "canvas",
         layout: "copy-first",
         title: "Canvas",
         description:
-          "An infinite whiteboard where the agent draws flowcharts, ERDs, architecture diagrams, and org charts shape by shape, then edits them in place when you ask.",
+          "An infinite whiteboard where the agent places each shape one at a time, with room between boxes so diagrams stay readable. Ask for a change and it edits the diagram in place.",
         bullets: [
-          "Explore flowcharts, ERDs, architecture diagrams, and org charts",
-          "Watch each shape appear as the agent works",
-          "Ask for a change and see the diagram update in place",
+          "Flowcharts, architecture diagrams and anything visual",
+          "Entity-relationship diagrams with real tables, columns and relationships",
+          "Evenly spaced layouts with no overlapping shapes",
         ],
         mock: {
           kind: "canvas",
@@ -60,11 +60,11 @@ export const landingCopy = {
         layout: "mock-first",
         title: "Docs",
         description:
-          "A block editor where the agent turns a diagram into a written spec, then rewrites or summarizes sections on command.",
+          "A rich-text editor where the agent writes specs, notes, explanations and plans. It edits the blocks you point at and leaves the rest of the document alone.",
         bullets: [
-          "Turn a diagram into a clear written spec",
-          "Rewrite a section without changing the rest",
-          "Summarize long docs in a moment",
+          "Headings, lists, checklists, tables, code blocks and links",
+          "Add, rewrite or remove a single block without touching the rest",
+          "Turn a diagram into a written spec, or draw what a doc describes",
         ],
         mock: {
           kind: "docs",
@@ -118,29 +118,29 @@ export const landingCopy = {
     ],
   },
   howItWorks: {
-    eyebrow: "A clear path from idea to action",
+    eyebrow: "From request to finished work",
     heading: "How it works",
     steps: [
       {
         number: "01",
         id: "describe",
-        title: "Describe it",
+        title: "Ask in plain words",
         description:
-          "Tell Helfer what you’re exploring, planning, or trying to solve.",
+          "Say what you need, like a checkout flow, a database schema or a project plan. Name a surface to limit the change to just the canvas or just the doc.",
       },
       {
         number: "02",
         id: "draw",
-        title: "Watch the agent draw",
+        title: "Helfer picks the surface",
         description:
-          "See your idea take shape on the canvas, one considered shape at a time.",
+          "Visual work goes on the canvas and written work goes in the doc. When a request needs both, such as a schema and its documentation, it builds both.",
       },
       {
         number: "03",
         id: "iterate",
-        title: "Keep iterating together",
+        title: "Refine in place",
         description:
-          "Ask for changes, turn the result into docs, and bring your team into the same workspace.",
+          "Ask for a change and the agent edits what is already there. Turn a diagram into a spec or a doc into a diagram whenever you like.",
       },
     ],
   },
@@ -154,9 +154,9 @@ export const landingCopy = {
   },
   closingCta: {
     eyebrow: "Your next idea starts here",
-    heading: "Make room for what you’re building.",
+    heading: "Say what you need. Watch it get built.",
     description:
-      "Bring your ideas, your team, and your agent into one shared workspace.",
+      "Open a workspace and let Helfer draw the diagram, write the doc, or do both.",
     action: { label: "Start building free", href: "/sign-up" },
     mascotAlt: "Helfer mascot",
   },

@@ -4,7 +4,7 @@ import { useCreateBlockNote } from "@blocknote/react";
 import { BlockNoteView } from "@blocknote/mantine";
 import "@blocknote/mantine/style.css";
 import type { Block } from "@blocknote/core";
-import { helferDarkTheme } from "@/lib/blocknote-theme";
+import { helferLightTheme } from "@/lib/blocknote-theme";
 
 // Read-only doc from its saved JSON copy — used by the public shared link.
 export function DocViewer({ content }: { content: Block[] | null }) {
@@ -12,6 +12,6 @@ export function DocViewer({ content }: { content: Block[] | null }) {
     initialContent: content?.length ? content : undefined,
   });
   return (
-    <BlockNoteView editor={editor} editable={false} theme={helferDarkTheme} />
+    <BlockNoteView editor={editor} editable={false} theme={helferLightTheme} />
   );
 }
