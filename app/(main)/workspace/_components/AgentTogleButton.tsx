@@ -59,7 +59,7 @@ export function AgentToggleButton({
         ) : (
           <>
             <Image
-              src="/brand/mascot.png"
+              src="/brand/mascot-dark.png"
               alt=""
               width={16}
               height={16}
