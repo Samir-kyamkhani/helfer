@@ -17,3 +17,11 @@ export async function requireActionSession() {
   if (!session) throw new Error("Authentication required");
   return session;
 }
+
+export async function redirectIfAuthenticated() {
+  const session = await getCurrentSession();
+
+  if (session) {
+    redirect("/dashboard");
+  }
+}

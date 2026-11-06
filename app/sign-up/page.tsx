@@ -1,6 +1,9 @@
 import { AuthCard, AuthPageFrame } from "@/components/auth/AuthCard";
+import { redirectIfAuthenticated } from "@/lib/auth/session";
 
-export default function SignUpPage() {
+export default async function SignUpPage() {
+  await redirectIfAuthenticated();
+
   return (
     <AuthPageFrame>
       <AuthCard mode="sign-up" />
