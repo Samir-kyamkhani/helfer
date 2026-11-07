@@ -39,6 +39,14 @@ const statusMap: Record<ProviderSubscription["status"], SubscriptionStatus> = {
   paused: SubscriptionStatus.PAUSED,
 };
 
+const paymentStatusRank: Record<PaymentStatus, number> = {
+  PENDING: 0,
+  FAILED: 1,
+  SUCCEEDED: 2,
+  PARTIALLY_REFUNDED: 3,
+  REFUNDED: 4,
+};
+
 async function assertOwnerAccess(ownerType: BillingOwnerKind, ownerId: string, mode: "read" | "manage") {
   const session = await getCurrentSession();
   if (!session?.user) throw new Error("Authentication required.");
@@ -426,7 +434,8 @@ async function persistInvoice(
   await tx.invoice.upsert({
     where: { provider_providerInvoiceId: { provider, providerInvoiceId: value.id } },
     create: {
-      ...owner,
+      ownerType: owner.ownerType,
+      ownerId: owner.ownerId,
       provider,
       providerInvoiceId: value.id,
       subscriptionId: subscription?.id,
@@ -460,34 +469,54 @@ async function persistPayment(
   value: ProviderPayment,
   owner: { ownerType: BillingOwnerType; ownerId: string },
 ) {
-  const subscription = value.subscriptionId
-    ? await tx.subscription.findUnique({ where: { provider_providerSubscriptionId: { provider, providerSubscriptionId: value.subscriptionId } }, select: { id: true } })
-    : null;
+  let subscriptionId: string | null = null;
+  if (value.subscriptionId) {
+    const subscription = await tx.subscription.findUnique({
+      where: { provider_providerSubscriptionId: { provider, providerSubscriptionId: value.subscriptionId } },
+      select: { id: true },
+    });
+    subscriptionId = subscription?.id ?? null;
+  } else if (value.invoiceId) {
+    const invoice = await tx.invoice.findUnique({
+      where: { provider_providerInvoiceId: { provider, providerInvoiceId: value.invoiceId } },
+      select: { subscriptionId: true },
+    });
+    subscriptionId = invoice?.subscriptionId ?? null;
+  }
   const providerStatus = value.status === "succeeded" ? PaymentStatus.SUCCEEDED
     : value.status === "failed" ? PaymentStatus.FAILED
       : value.status === "refunded" ? PaymentStatus.REFUNDED
         : value.status === "partially_refunded" ? PaymentStatus.PARTIALLY_REFUNDED
         : PaymentStatus.PENDING;
+  const existing = await tx.payment.findUnique({
+    where: { provider_providerPaymentId: { provider, providerPaymentId: value.id } },
+    select: { status: true, paidAt: true },
+  });
+  const status = existing && paymentStatusRank[existing.status] > paymentStatusRank[providerStatus]
+    ? existing.status
+    : providerStatus;
+  const paidAt = value.paidAt ?? existing?.paidAt ?? null;
   await tx.payment.upsert({
     where: { provider_providerPaymentId: { provider, providerPaymentId: value.id } },
     create: {
-      ...owner,
+      ownerType: owner.ownerType,
+      ownerId: owner.ownerId,
       provider,
       providerPaymentId: value.id,
-      subscriptionId: subscription?.id,
+      subscriptionId,
       amount: value.amount,
       currency: value.currency,
-      status: providerStatus,
+      status,
       description: value.description,
-      paidAt: value.paidAt,
+      paidAt,
     },
     update: {
-      subscriptionId: subscription?.id,
+      subscriptionId,
       amount: value.amount,
       currency: value.currency,
-      status: providerStatus,
+      status,
       description: value.description,
-      paidAt: value.paidAt,
+      paidAt,
     },
   });
 }
@@ -605,7 +634,7 @@ export async function processVerifiedProviderEvent(provider: PaymentProviderName
         const customer = await tx.billingCustomer.findFirst({ where: { provider, providerCustomerId: event.payment.customerId } });
         if (customer) eventOwner = { ownerType: customer.ownerType, ownerId: customer.ownerId };
       }
-      const relatedSubscriptionId = event.payment?.subscriptionId ?? event.invoice?.subscriptionId;
+      const relatedSubscriptionId = event.payment?.subscriptionId ?? event.subscription?.id ?? event.invoice?.subscriptionId;
       if (!eventOwner && relatedSubscriptionId) {
         const subscription = await tx.subscription.findUnique({
           where: { provider_providerSubscriptionId: { provider, providerSubscriptionId: relatedSubscriptionId } },
@@ -616,10 +645,17 @@ export async function processVerifiedProviderEvent(provider: PaymentProviderName
       if (eventOwner && event.invoice) {
         await persistInvoice(tx, provider, event.invoice, eventOwner);
       }
-      if (eventOwner && event.payment) await persistPayment(tx, provider, event.payment, eventOwner);
+      if (eventOwner && event.payment) {
+        await persistPayment(tx, provider, {
+          ...event.payment,
+          subscriptionId: relatedSubscriptionId ?? null,
+        }, eventOwner);
+      }
 
       await tx.paymentEvent.update({ where: { id: stored.id }, data: { processedAt: new Date(), attempts: { increment: 1 }, lastError: null } });
-      if (checkoutAttempt) await tx.checkoutAttempt.update({ where: { id: checkoutAttempt.id }, data: { status: "processed" } });
+      if (checkoutAttempt && !event.subscription) {
+        await tx.checkoutAttempt.update({ where: { id: checkoutAttempt.id }, data: { status: "processed" } });
+      }
     });
     return { duplicate: false };
   } catch (error) {
@@ -639,8 +675,6 @@ export async function verifyRazorpayCheckout(input: unknown) {
   });
   const parsed = schema.parse(input);
   await assertOwnerAccess(parsed.ownerType, parsed.ownerId, "manage");
-  const provider = getPaymentProviderByName("RAZORPAY");
-  if (!(await provider.verifyCheckout(parsed))) throw new Error("Razorpay checkout signature verification failed.");
   const attempt = await prisma.checkoutAttempt.findFirst({
     where: {
       provider: "RAZORPAY",
@@ -649,44 +683,41 @@ export async function verifyRazorpayCheckout(input: unknown) {
       ownerId: parsed.ownerId,
     },
   });
-  if (!attempt) throw new Error("The checkout does not belong to this account.");
-  const remote = await provider.retrieveSubscription(parsed.subscriptionId);
+  if (!attempt?.providerSubscriptionId) throw new Error("The checkout does not belong to this account.");
+  const providerSubscriptionId = attempt.providerSubscriptionId;
+  const provider = getPaymentProviderByName("RAZORPAY");
+  if (!(await provider.verifyCheckout({
+    paymentId: parsed.paymentId,
+    subscriptionId: providerSubscriptionId,
+    signature: parsed.signature,
+  }))) throw new Error("Razorpay checkout signature verification failed.");
+  const remote = await provider.retrieveSubscription(providerSubscriptionId);
   const payment = await provider.retrievePayment(parsed.paymentId);
-  if (payment.status !== "succeeded" || payment.subscriptionId !== parsed.subscriptionId) {
+  if (payment.status === "failed" || payment.status === "refunded" || payment.status === "partially_refunded") {
     throw new Error("Razorpay has not confirmed a payment for this subscription.");
   }
-  await persistSubscription(prisma, "RAZORPAY", remote, {
-    ownerType: attempt.ownerType,
-    ownerId: attempt.ownerId,
-    planId: attempt.planId,
-    interval: attempt.interval,
-    providerCustomerId: remote.customerId || attempt.providerCustomerId,
-  });
-  if (remote.customerId) {
-    await prisma.billingCustomer.update({
-      where: { ownerType_ownerId_provider: { ownerType: attempt.ownerType, ownerId: attempt.ownerId, provider: "RAZORPAY" } },
-      data: { providerCustomerId: remote.customerId },
-    });
-  }
-  const subscription = await prisma.subscription.findUnique({
-    where: { provider_providerSubscriptionId: { provider: "RAZORPAY", providerSubscriptionId: parsed.subscriptionId } },
-    select: { id: true },
-  });
-  await prisma.payment.upsert({
-    where: { provider_providerPaymentId: { provider: "RAZORPAY", providerPaymentId: parsed.paymentId } },
-    create: {
+  await prisma.$transaction(async (tx) => {
+    await persistSubscription(tx, "RAZORPAY", remote, {
       ownerType: attempt.ownerType,
       ownerId: attempt.ownerId,
-      provider: "RAZORPAY",
-      providerPaymentId: parsed.paymentId,
-      subscriptionId: subscription?.id,
-      amount: payment.amount,
-      currency: payment.currency,
-      status: PaymentStatus.SUCCEEDED,
-      description: payment.description,
-      paidAt: payment.paidAt,
-    },
-    update: {},
+      planId: attempt.planId,
+      interval: attempt.interval,
+      providerCustomerId: remote.customerId || attempt.providerCustomerId,
+    });
+    if (remote.customerId) {
+      await tx.billingCustomer.update({
+        where: { ownerType_ownerId_provider: { ownerType: attempt.ownerType, ownerId: attempt.ownerId, provider: "RAZORPAY" } },
+        data: { providerCustomerId: remote.customerId },
+      });
+    }
+    await persistPayment(tx, "RAZORPAY", {
+      ...payment,
+      subscriptionId: providerSubscriptionId,
+    }, { ownerType: attempt.ownerType, ownerId: attempt.ownerId });
+    await tx.checkoutAttempt.update({
+      where: { id: attempt.id },
+      data: { status: "completed" },
+    });
   });
   return { subscriptionStatus: remote.status };
 }

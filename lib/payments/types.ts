@@ -96,6 +96,7 @@ export type ProviderPayment = {
   id: string;
   customerId: string;
   subscriptionId?: string | null;
+  invoiceId?: string | null;
   amount: number;
   currency: string;
   status: "pending" | "succeeded" | "failed" | "refunded" | "partially_refunded";

@@ -35,6 +35,7 @@ type RzPayment = {
   id: string;
   customer_id: string | null;
   subscription_id?: string | null;
+  invoice_id?: string | null;
   amount: number;
   currency: string;
   status: string;
@@ -68,13 +69,13 @@ function asNotes(value: Record<string, unknown> | undefined) {
 function mapSubscription(subscription: RzSubscription): ProviderSubscription {
   const status: ProviderSubscription["status"] =
     subscription.status === "active" ? "active"
-      : subscription.status === "halted" ? "past_due"
-        : subscription.status === "cancelled" ? "canceled"
-          : subscription.status === "completed" || subscription.status === "expired"
-            ? "canceled"
-            : subscription.status === "pending" || subscription.status === "authenticated"
-              ? "incomplete"
-              : "incomplete";
+      : subscription.status === "authenticated" ? "trialing"
+        : subscription.status === "pending" ? "past_due"
+          : subscription.status === "halted" ? "unpaid"
+            : subscription.status === "cancelled" ? "canceled"
+              : subscription.status === "completed" || subscription.status === "expired"
+                ? "canceled"
+                : "incomplete";
   return {
     id: subscription.id,
     providerPlanId: subscription.plan_id,
@@ -95,6 +96,7 @@ function mapPayment(payment: RzPayment): ProviderPayment {
     id: payment.id,
     customerId: payment.customer_id ?? "",
     subscriptionId: payment.subscription_id ?? null,
+    invoiceId: payment.invoice_id ?? null,
     amount: payment.amount,
     currency: payment.currency.toUpperCase(),
     status: payment.refund_status === "partial" ? "partially_refunded"
@@ -154,6 +156,9 @@ export class RazorpayAdapter implements PaymentProvider {
     const customer = await this.razorpay.customers.create({
       name: input.name,
       email: input.email,
+      // Razorpay only honors the *string* "0" here; the SDK types incorrectly
+      // allow boolean/0/1, and those still throw "Customer already exists".
+      fail_existing: "0" as unknown as 0,
       notes: input.metadata,
     });
     return { id: customer.id };
