@@ -17,6 +17,7 @@ import { listSubscriptionPlans } from "@/lib/payments/service";
 import { PricingPlans } from "@/components/billing/PricingPlans";
 import { Suspense } from "react";
 import { SuspenseFallback } from "@/components/SuspenseFallback";
+import { DashboardMock } from "@/components/Dashboardmock";
 
 type LandingFeature = (typeof landingCopy.features.rows)[number];
 type LandingStep = (typeof landingCopy.howItWorks.steps)[number];
@@ -298,7 +299,9 @@ export default function Home() {
 
             <h1 className="max-w-4xl text-balance font-heading text-5xl font-semibold leading-[1] tracking-[-0.055em] text-foreground sm:text-6xl md:text-7xl lg:text-[5.5rem]">
               {hero.headline.before}{" "}
-              <span className="text-brand-strong">{hero.headline.highlight}</span>{" "}
+              <span className="text-brand-strong">
+                {hero.headline.highlight}
+              </span>{" "}
               {hero.headline.after}
               <br className="hidden sm:block" /> {hero.headline.finalLine}
             </h1>
@@ -332,7 +335,7 @@ export default function Home() {
             </div>
 
             <div className="survey-frame scroll-tilt mt-20 w-full max-w-5xl">
-              <div className="overflow-hidden rounded-2xl border border-border bg-card shadow-xl">
+              {/* <div className="overflow-hidden rounded-2xl border border-border bg-card shadow-xl">
                 <video
                   autoPlay
                   muted
@@ -347,6 +350,10 @@ export default function Home() {
                   <source src="/videos/hero.mp4" type="video/mp4" />
                   {hero.videoFallback}
                 </video>
+              </div> */}
+
+              <div className="survey-frame scroll-tilt mt-20 w-full max-w-5xl">
+                <DashboardMock />
               </div>
             </div>
           </div>
