@@ -94,6 +94,7 @@ export class StripeAdapter implements PaymentProvider {
     supportsPaymentMethodManagement: true,
     supportsCoupons: true,
     supportsResume: true,
+    supportsRenewalResume: true,
     supportsRefunds: true,
   };
 

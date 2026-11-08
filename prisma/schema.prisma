@@ -222,7 +222,10 @@ model BillingCustomer {
   updatedAt          DateTime         @updatedAt
 
   @@unique([ownerType, ownerId, provider])
-  @@unique([provider, providerCustomerId])
+  // A single provider customer can be shared by multiple billing owners.
+  // Razorpay deduplicates customers by email, so a user and their organization
+  // can legitimately resolve to the same customer id.
+  @@index([provider, providerCustomerId])
   @@index([ownerId])
 }
 

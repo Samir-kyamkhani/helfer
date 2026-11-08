@@ -6,6 +6,8 @@ export type ProviderCapabilities = {
   supportsPaymentMethodManagement: boolean;
   supportsCoupons: boolean;
   supportsResume: boolean;
+  /** Whether a scheduled end-of-period cancellation can be undone. */
+  supportsRenewalResume: boolean;
   supportsRefunds: boolean;
 };
 
@@ -159,6 +161,24 @@ export class ProviderFeatureUnsupportedError extends Error {
   constructor(feature: string, provider: PaymentProviderName) {
     super(`${feature} is not supported by ${provider.toLowerCase()}.`);
     this.name = "ProviderFeatureUnsupportedError";
+  }
+}
+
+/**
+ * Raised when a provider refuses to mutate an already-authorized mandate
+ * (for example, Razorpay UPI/eMandate subscriptions). The only supported
+ * recovery is a brand-new subscription checkout, which requires the
+ * customer to authorize a fresh mandate.
+ */
+export class ProviderSubscriptionNotUpdatableError extends Error {
+  constructor(
+    provider: PaymentProviderName,
+    readonly paymentMode: string,
+  ) {
+    super(
+      `${provider.toLowerCase()} cannot change a subscription authorized with ${paymentMode.toUpperCase()}. A new subscription authorization is required.`,
+    );
+    this.name = "ProviderSubscriptionNotUpdatableError";
   }
 }
 

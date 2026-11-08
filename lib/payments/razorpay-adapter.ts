@@ -2,6 +2,7 @@ import { createHmac, timingSafeEqual } from "node:crypto";
 import Razorpay from "razorpay";
 import {
   ProviderFeatureUnsupportedError,
+  ProviderSubscriptionNotUpdatableError,
   toProviderDate,
   type BillingCycle,
   type CreateCustomerInput,
@@ -16,6 +17,7 @@ import {
   type StartCheckoutInput,
   type VerifyCheckoutInput,
 } from "@/lib/payments/types";
+import { providerFailure } from "@/lib/payments/errors";
 
 type RzSubscription = {
   id: string;
@@ -138,6 +140,9 @@ export class RazorpayAdapter implements PaymentProvider {
     supportsPaymentMethodManagement: false,
     supportsCoupons: false,
     supportsResume: true,
+    // Razorpay documents that a cancelled subscription cannot be reactivated,
+    // so a scheduled cycle-end cancellation must not be presented as resumable.
+    supportsRenewalResume: false,
     supportsRefunds: true,
   };
 
@@ -208,12 +213,22 @@ export class RazorpayAdapter implements PaymentProvider {
 
   async updateSubscription(id: string, providerPlanId: string, _interval: BillingCycle, totalBillingCycles?: number) {
     const current = await this.razorpay.subscriptions.fetch(id) as unknown as RzSubscription;
-    const updated = await this.razorpay.subscriptions.update(id, {
-      plan_id: providerPlanId,
-      remaining_count: totalBillingCycles ?? Math.max(current.total_count - current.paid_count, 1),
-      schedule_change_at: "now",
-    }) as unknown as RzSubscription;
-    return { ...mapSubscription(updated), cancelAtPeriodEnd: false };
+    try {
+      const updated = await this.razorpay.subscriptions.update(id, {
+        plan_id: providerPlanId,
+        remaining_count: totalBillingCycles ?? Math.max(current.total_count - current.paid_count, 1),
+        schedule_change_at: "now",
+      }) as unknown as RzSubscription;
+      return { ...mapSubscription(updated), cancelAtPeriodEnd: false };
+    } catch (error) {
+      // Razorpay permanently rejects in-place updates for UPI/eMandate
+      // mandates. Surface that as a typed error so the billing service can
+      // start a replacement checkout instead of returning a generic failure.
+      const failure = providerFailure(error);
+      const immutable = failure?.message.match(/cannot be updated when payment mode is (upi|emandate)/i);
+      if (immutable) throw new ProviderSubscriptionNotUpdatableError(this.name, immutable[1]);
+      throw error;
+    }
   }
 
   async cancelSubscription(id: string, atPeriodEnd: boolean) {
@@ -222,11 +237,8 @@ export class RazorpayAdapter implements PaymentProvider {
   }
 
   async resumeSubscription(id: string) {
-    const current = await this.razorpay.subscriptions.fetch(id) as unknown as RzSubscription;
-    if (current.has_scheduled_changes) {
-      return mapSubscription(await this.razorpay.subscriptions.cancelScheduledChanges(id) as unknown as RzSubscription);
-    }
-    return mapSubscription(await this.razorpay.subscriptions.resume(id, { resume_at: "now" }) as unknown as RzSubscription);
+    const resumed = await this.razorpay.subscriptions.resume(id, { resume_at: "now" }) as unknown as RzSubscription;
+    return { ...mapSubscription(resumed), cancelAtPeriodEnd: false };
   }
 
   async createPaymentMethodManagementSession(): Promise<string> {

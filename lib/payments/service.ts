@@ -6,13 +6,15 @@ import { getCurrentSession } from "@/lib/auth/session";
 import { canManageBilling } from "@/lib/auth/permissions";
 import { prisma } from "@/lib/prisma";
 import { getPaymentProvider, getPaymentProviderByName } from "@/lib/payments/factory";
-import type {
-  BillingOwnerKind,
-  PaymentProviderName,
-  ProviderInvoice,
-  ProviderPayment,
-  ProviderSubscription,
-  ProviderWebhookEvent,
+import {
+  ProviderSubscriptionNotUpdatableError,
+  type BillingOwnerKind,
+  type PaymentProvider,
+  type PaymentProviderName,
+  type ProviderInvoice,
+  type ProviderPayment,
+  type ProviderSubscription,
+  type ProviderWebhookEvent,
 } from "@/lib/payments/types";
 
 const checkoutSchema = z.object({
@@ -46,6 +48,80 @@ const paymentStatusRank: Record<PaymentStatus, number> = {
   PARTIALLY_REFUNDED: 3,
   REFUNDED: 4,
 };
+
+const liveSubscriptionStatuses = [
+  SubscriptionStatus.ACTIVE,
+  SubscriptionStatus.TRIALING,
+  SubscriptionStatus.PAST_DUE,
+] as const;
+
+const liveSubscriptionStatusSet = new Set<SubscriptionStatus>(liveSubscriptionStatuses);
+
+const liveProviderStatusSet = new Set<ProviderSubscription["status"]>([
+  "active",
+  "trialing",
+  "past_due",
+]);
+
+function providerStatusForLocalStatus(status: SubscriptionStatus): ProviderSubscription["status"] {
+  switch (status) {
+    case SubscriptionStatus.TRIALING:
+      return "trialing";
+    case SubscriptionStatus.PAST_DUE:
+      return "past_due";
+    default:
+      return "active";
+  }
+}
+
+/**
+ * Razorpay can respond to a cycle-end cancellation with a terminal status and
+ * an `ended_at` in the past even though the customer paid through the end of
+ * the current period. Keep the paid status locally until the period actually
+ * ends so cancellation never revokes access the customer already paid for.
+ */
+function retainPaidPeriodForScheduledCancellation(
+  value: ProviderSubscription,
+  previousStatus: SubscriptionStatus,
+): ProviderSubscription {
+  if (value.status !== "canceled") return value;
+  const periodEnd = value.currentPeriodEnd ?? value.nextBillingDate;
+  if (!periodEnd || periodEnd.getTime() <= Date.now()) return value;
+  return {
+    ...value,
+    status: providerStatusForLocalStatus(previousStatus),
+    endedAt: null,
+    canceledAt: null,
+    cancelAtPeriodEnd: true,
+  };
+}
+
+function currentSubscriptionFrom<T extends { status: SubscriptionStatus; updatedAt: Date }>(subscriptions: T[]) {
+  return subscriptions.find((subscription) => liveSubscriptionStatusSet.has(subscription.status))
+    ?? subscriptions.find((subscription) => subscription.status === SubscriptionStatus.PAUSED)
+    ?? subscriptions.find((subscription) => subscription.status === SubscriptionStatus.INCOMPLETE)
+    ?? subscriptions[0]
+    ?? null;
+}
+
+/**
+ * Capabilities are resolved from the adapter that is actually responsible for
+ * the subscription. A missing provider configuration must not break the
+ * billing overview, so failures degrade to "no provider-specific controls".
+ */
+function providerControlCapabilities(provider: "STRIPE" | "RAZORPAY") {
+  try {
+    const capabilities = getPaymentProviderByName(provider).capabilities;
+    return {
+      supportsResume: capabilities.supportsResume,
+      supportsRenewalResume: capabilities.supportsRenewalResume,
+      supportsPaymentMethodManagement: capabilities.supportsPaymentMethodManagement,
+    };
+  } catch (error) {
+    console.error(`Unable to read ${provider} billing capabilities.`, error);
+    return null;
+  }
+}
 
 async function assertOwnerAccess(ownerType: BillingOwnerKind, ownerId: string, mode: "read" | "manage") {
   const session = await getCurrentSession();
@@ -162,7 +238,7 @@ export async function startSubscriptionCheckout(input: unknown) {
   const parsed = checkoutSchema.parse(input);
   const session = await assertOwnerAccess(parsed.ownerType, parsed.ownerId, "manage");
   if (!session.user.emailVerified) throw new Error("Verify your email before starting a subscription.");
-  await expireUnmanagedSubscriptions(parsed.ownerType, parsed.ownerId);
+  await expireEndedSubscriptions(parsed.ownerType, parsed.ownerId);
 
   const provider = getPaymentProvider();
   const plan = await prisma.subscriptionPlan.findFirst({ where: { id: parsed.planId, active: true } });
@@ -235,19 +311,31 @@ async function authorizedOwner(input: unknown, mode: "read" | "manage") {
 
 export async function getBillingOverview(input: unknown) {
   const owner = await authorizedOwner(input, "read");
-  await expireUnmanagedSubscriptions(owner.ownerType, owner.ownerId);
+  await expireEndedSubscriptions(owner.ownerType, owner.ownerId);
   try { await refreshProviderHistory(owner); }
   catch { console.error("Unable to refresh billing provider history for this account."); }
-  const [subscription, customer, paymentMethods] = await Promise.all([
-    prisma.subscription.findFirst({
+  const [subscriptions, customer, paymentMethods] = await Promise.all([
+    prisma.subscription.findMany({
       where: { ownerType: owner.ownerType, ownerId: owner.ownerId },
       include: { plan: true },
       orderBy: { updatedAt: "desc" },
+      take: 25,
     }),
     prisma.billingCustomer.findFirst({ where: { ownerType: owner.ownerType, ownerId: owner.ownerId } }),
     prisma.paymentMethod.findMany({ where: { ownerType: owner.ownerType, ownerId: owner.ownerId }, orderBy: [{ isDefault: "desc" }, { createdAt: "desc" }] }),
   ]);
-  return { owner, subscription, customer, paymentMethods, provider: subscription?.provider ?? process.env.PAYMENT_PROVIDER?.toUpperCase() ?? null };
+  const subscription = currentSubscriptionFrom(subscriptions);
+  const provider = subscription?.provider ?? process.env.PAYMENT_PROVIDER?.toUpperCase() ?? null;
+  return {
+    owner,
+    subscription,
+    customer,
+    paymentMethods,
+    provider,
+    capabilities: subscription && subscription.provider !== "MANUAL"
+      ? providerControlCapabilities(subscription.provider)
+      : null,
+  };
 }
 
 export async function createPaymentManagementSession(input: unknown) {
@@ -274,7 +362,7 @@ export async function createPaymentManagementSession(input: unknown) {
 export async function changeSubscriptionPlan(input: unknown) {
   const schema = ownerInputSchema.extend({ planId: z.string().min(1), interval: z.enum(["MONTHLY", "YEARLY"]) });
   const parsed = schema.parse(input);
-  await assertOwnerAccess(parsed.ownerType, parsed.ownerId, "manage");
+  const session = await assertOwnerAccess(parsed.ownerType, parsed.ownerId, "manage");
   const current = await prisma.subscription.findFirst({
     where: { ownerType: parsed.ownerType, ownerId: parsed.ownerId, status: { in: [SubscriptionStatus.ACTIVE, SubscriptionStatus.TRIALING, SubscriptionStatus.PAST_DUE] } },
     orderBy: { updatedAt: "desc" },
@@ -286,13 +374,31 @@ export async function changeSubscriptionPlan(input: unknown) {
   if (!plan) throw new Error("The selected plan is unavailable.");
   const price = parsed.interval === "MONTHLY" ? plan.monthlyPrice : plan.yearlyPrice;
   if (price < 1) {
-    const canceled = await provider.cancelSubscription(current.providerSubscriptionId, true);
+    if (current.cancelAtPeriodEnd) return current;
+    const canceled = retainPaidPeriodForScheduledCancellation(
+      await provider.cancelSubscription(current.providerSubscriptionId, true),
+      current.status,
+    );
     return persistSubscription(prisma, provider.name, canceled, {
       ownerType: current.ownerType,
       ownerId: current.ownerId,
       planId: current.planId,
       interval: current.interval,
       providerCustomerId: current.providerCustomerId,
+    }, { retainPaidPeriod: true });
+  }
+  // A subscription that is already scheduled to end cannot be mutated on
+  // providers such as Razorpay, so a new authorization is required even when
+  // the customer still has access for the remainder of the paid period.
+  if (current.cancelAtPeriodEnd && !provider.capabilities.supportsRenewalResume) {
+    return startPlanChangeCheckout({
+      provider,
+      user: { id: session.user.id, email: session.user.email, name: session.user.name },
+      ownerType: current.ownerType,
+      ownerId: current.ownerId,
+      current,
+      plan,
+      interval: parsed.interval,
     });
   }
   const providerPlan = providerPlanDetails(plan, provider.name, parsed.interval);
@@ -302,13 +408,30 @@ export async function changeSubscriptionPlan(input: unknown) {
     planId: plan.id,
     interval: parsed.interval,
   };
-  const updated = await provider.updateSubscription(
-    current.providerSubscriptionId,
-    providerPlan.id,
-    parsed.interval,
-    providerPlan.totalBillingCycles,
-    subscriptionMetadata,
-  );
+  let updated: ProviderSubscription;
+  try {
+    updated = await provider.updateSubscription(
+      current.providerSubscriptionId,
+      providerPlan.id,
+      parsed.interval,
+      providerPlan.totalBillingCycles,
+      subscriptionMetadata,
+    );
+  } catch (error) {
+    if (!(error instanceof ProviderSubscriptionNotUpdatableError)) throw error;
+    // Providers such as Razorpay permanently lock UPI/eMandate mandates. The
+    // only supported upgrade path is a new subscription that the customer
+    // authorizes again, so hand the client a fresh checkout.
+    return startPlanChangeCheckout({
+      provider,
+      user: { id: session.user.id, email: session.user.email, name: session.user.name },
+      ownerType: current.ownerType,
+      ownerId: current.ownerId,
+      current,
+      plan,
+      interval: parsed.interval,
+    });
+  }
   return persistSubscription(prisma, provider.name, updated, {
     ownerType: current.ownerType,
     ownerId: current.ownerId,
@@ -318,58 +441,209 @@ export async function changeSubscriptionPlan(input: unknown) {
   });
 }
 
+/**
+ * Creates a replacement subscription when the current mandate cannot be
+ * updated in place. The old subscription is intentionally left active until
+ * the replacement has been paid and verified, so abandoning checkout does
+ * not revoke the customer's existing access.
+ */
+async function startPlanChangeCheckout(args: {
+  provider: PaymentProvider;
+  user: { id: string; email: string; name: string };
+  ownerType: BillingOwnerType;
+  ownerId: string;
+  current: { providerSubscriptionId: string; providerCustomerId: string };
+  plan: {
+    id: string;
+    name: string;
+    currency: string;
+    monthlyPrice: number;
+    yearlyPrice: number;
+    stripeMonthlyPriceId: string | null;
+    stripeYearlyPriceId: string | null;
+    razorpayMonthlyPlanId: string | null;
+    razorpayYearlyPlanId: string | null;
+    razorpayMonthlyCycles: number | null;
+    razorpayYearlyCycles: number | null;
+  };
+  interval: BillingInterval;
+}) {
+  const providerPlan = providerPlanDetails(args.plan, args.provider.name, args.interval);
+  const price = args.interval === BillingInterval.MONTHLY ? args.plan.monthlyPrice : args.plan.yearlyPrice;
+  const baseUrl = process.env.BETTER_AUTH_URL ?? process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000";
+  const result = await args.provider.createCheckout({
+    customerId: args.current.providerCustomerId,
+    customerEmail: args.user.email,
+    customerName: args.user.name,
+    planId: args.plan.id,
+    planName: args.plan.name,
+    providerPlanId: providerPlan.id,
+    interval: args.interval,
+    currency: args.plan.currency,
+    amount: price,
+    successUrl: `${baseUrl}/checkout/success?session_id={CHECKOUT_SESSION_ID}`,
+    cancelUrl: `${baseUrl}/checkout/cancel`,
+    totalBillingCycles: providerPlan.totalBillingCycles,
+    metadata: {
+      ownerType: args.ownerType,
+      ownerId: args.ownerId,
+      planId: args.plan.id,
+      interval: args.interval,
+      initiatedByUserId: args.user.id,
+      replacesSubscriptionId: args.current.providerSubscriptionId,
+    },
+  });
+  await prisma.checkoutAttempt.create({
+    data: {
+      ownerType: args.ownerType,
+      ownerId: args.ownerId,
+      initiatedByUserId: args.user.id,
+      planId: args.plan.id,
+      provider: args.provider.name,
+      interval: args.interval,
+      providerCustomerId: args.current.providerCustomerId,
+      providerCheckoutId: result.checkoutId,
+      providerSubscriptionId: result.kind === "razorpay-subscription" ? result.subscriptionId : null,
+      checkoutUrl: result.kind === "redirect" ? result.url : null,
+    },
+  });
+  return result;
+}
+
+/**
+ * Cancels the subscription that a verified replacement superseded. Failures
+ * are logged instead of failing verification because the replacement has
+ * already been paid for; a later webhook will attempt the same reconciliation.
+ */
+async function cancelSupersededSubscription(
+  provider: PaymentProvider,
+  owner: { ownerType: BillingOwnerType; ownerId: string },
+  providerSubscriptionId: string,
+) {
+  const existing = await prisma.subscription.findUnique({
+    where: { provider_providerSubscriptionId: { provider: provider.name, providerSubscriptionId } },
+  });
+  if (!existing || existing.ownerType !== owner.ownerType || existing.ownerId !== owner.ownerId) return;
+  if (existing.status === SubscriptionStatus.CANCELED || existing.status === SubscriptionStatus.INCOMPLETE_EXPIRED) return;
+  const persist = (value: ProviderSubscription) => persistSubscription(prisma, provider.name, value, {
+    ownerType: existing.ownerType,
+    ownerId: existing.ownerId,
+    planId: existing.planId,
+    interval: existing.interval,
+    providerCustomerId: existing.providerCustomerId,
+  }, { retainPaidPeriod: false });
+  try {
+    await persist(await provider.cancelSubscription(providerSubscriptionId, false));
+  } catch (error) {
+    console.error(`Unable to cancel superseded ${provider.name} subscription ${providerSubscriptionId}.`, error);
+    try {
+      const remote = await provider.retrieveSubscription(providerSubscriptionId);
+      if (remote.status === "canceled" || remote.status === "incomplete_expired") await persist(remote);
+    } catch (reconcileError) {
+      console.error(`Unable to reconcile superseded ${provider.name} subscription ${providerSubscriptionId}.`, reconcileError);
+    }
+  }
+}
+
 export async function cancelCurrentSubscription(input: unknown, atPeriodEnd = true) {
+  if (typeof atPeriodEnd !== "boolean") throw new Error("Invalid cancellation option.");
   const owner = await authorizedOwner(input, "manage");
   const current = await prisma.subscription.findFirst({
-    where: { ownerType: owner.ownerType, ownerId: owner.ownerId, status: { in: [SubscriptionStatus.ACTIVE, SubscriptionStatus.TRIALING, SubscriptionStatus.PAST_DUE] } },
+    where: { ownerType: owner.ownerType, ownerId: owner.ownerId, status: { in: [...liveSubscriptionStatuses] } },
     orderBy: { updatedAt: "desc" },
   });
   if (!current) throw new Error("No active subscription was found.");
+  if (atPeriodEnd && current.cancelAtPeriodEnd) return current;
   if (current.provider === "MANUAL") throw new Error("This recorded subscription cannot be canceled through a payment provider.");
   const provider = getPaymentProviderByName(current.provider);
-  const updated = await provider.cancelSubscription(current.providerSubscriptionId, atPeriodEnd);
-  return persistSubscription(prisma, provider.name, updated, {
+  const updated = atPeriodEnd
+    ? retainPaidPeriodForScheduledCancellation(
+        await provider.cancelSubscription(current.providerSubscriptionId, true),
+        current.status,
+      )
+    : await provider.cancelSubscription(current.providerSubscriptionId, false);
+  const persisted = await persistSubscription(prisma, provider.name, updated, {
     ownerType: current.ownerType,
     ownerId: current.ownerId,
     planId: current.planId,
     interval: current.interval,
     providerCustomerId: current.providerCustomerId,
-  });
+  }, { retainPaidPeriod: atPeriodEnd });
+  console.info(
+    `Billing: ${atPeriodEnd ? "scheduled cancellation at period end" : "cancelled immediately"} for ${current.ownerType}:${current.ownerId} (${provider.name} ${current.providerSubscriptionId}).`,
+  );
+  return persisted;
 }
 
 export async function resumeCurrentSubscription(input: unknown) {
   const owner = await authorizedOwner(input, "manage");
   const current = await prisma.subscription.findFirst({
-    where: { ownerType: owner.ownerType, ownerId: owner.ownerId, status: { in: [SubscriptionStatus.ACTIVE, SubscriptionStatus.PAUSED] } },
+    where: {
+      ownerType: owner.ownerType,
+      ownerId: owner.ownerId,
+      status: { in: [...liveSubscriptionStatuses, SubscriptionStatus.PAUSED] },
+    },
     orderBy: { updatedAt: "desc" },
   });
   if (!current) throw new Error("No resumable subscription was found.");
   if (current.provider === "MANUAL") throw new Error("This recorded subscription cannot be resumed through a payment provider.");
   const provider = getPaymentProviderByName(current.provider);
-  if (!provider.capabilities.supportsResume) throw new Error("This payment provider does not support resuming subscriptions.");
+  if (current.status === SubscriptionStatus.PAUSED) {
+    if (!provider.capabilities.supportsResume) {
+      throw new Error("This payment provider does not support resuming subscriptions.");
+    }
+  } else {
+    if (!current.cancelAtPeriodEnd) {
+      throw new Error("Automatic renewal is already enabled.");
+    }
+    if (!provider.capabilities.supportsRenewalResume) {
+      throw new Error("This payment provider cannot undo a scheduled cancellation. Subscribe again after the current period ends.");
+    }
+  }
   const updated = await provider.resumeSubscription(current.providerSubscriptionId);
-  return persistSubscription(prisma, provider.name, updated, {
+  const persisted = await persistSubscription(prisma, provider.name, updated, {
     ownerType: current.ownerType,
     ownerId: current.ownerId,
     planId: current.planId,
     interval: current.interval,
     providerCustomerId: current.providerCustomerId,
-  });
+  }, { cancelAtPeriodEnd: false });
+  console.info(
+    `Billing: resumed automatic renewal for ${current.ownerType}:${current.ownerId} (${provider.name} ${current.providerSubscriptionId}).`,
+  );
+  return persisted;
 }
 
-async function expireUnmanagedSubscriptions(ownerType: BillingOwnerType, ownerId: string) {
+/**
+ * Ends subscriptions whose paid period has definitively passed. Provider
+ * subscriptions with a scheduled end are included so the UI cannot keep
+ * showing access after the period ends while a webhook is delayed.
+ */
+async function expireEndedSubscriptions(ownerType: BillingOwnerType, ownerId: string) {
   const now = new Date();
   await prisma.subscription.updateMany({
     where: {
       ownerType,
       ownerId,
       provider: "MANUAL",
-      status: {
-        in: [SubscriptionStatus.ACTIVE, SubscriptionStatus.TRIALING, SubscriptionStatus.PAST_DUE],
-      },
+      status: { in: [...liveSubscriptionStatuses] },
       currentPeriodEnd: { lte: now },
     },
-    data: { status: SubscriptionStatus.CANCELED, endedAt: now, cancelAtPeriodEnd: false },
+    data: { status: SubscriptionStatus.CANCELED, endedAt: now, cancelAtPeriodEnd: false, nextBillingDate: null },
+  });
+  await prisma.subscription.updateMany({
+    where: {
+      ownerType,
+      ownerId,
+      provider: { in: ["STRIPE", "RAZORPAY"] },
+      status: { in: [...liveSubscriptionStatuses] },
+      cancelAtPeriodEnd: true,
+      OR: [
+        { currentPeriodEnd: { lte: now } },
+        { currentPeriodEnd: null, nextBillingDate: { lte: now } },
+      ],
+    },
+    data: { status: SubscriptionStatus.CANCELED, endedAt: now, cancelAtPeriodEnd: false, nextBillingDate: null },
   });
 }
 
@@ -392,7 +666,54 @@ async function persistSubscription(
   provider: PaymentProviderName,
   value: ProviderSubscription,
   owner: { ownerType: BillingOwnerType; ownerId: string; planId: string; interval: BillingInterval; providerCustomerId: string },
+  options: { cancelAtPeriodEnd?: boolean; retainPaidPeriod?: boolean } = {},
 ) {
+  const existing = await client.subscription.findUnique({
+    where: { provider_providerSubscriptionId: { provider, providerSubscriptionId: value.id } },
+    select: {
+      cancelAtPeriodEnd: true,
+      status: true,
+      currentPeriodStart: true,
+      currentPeriodEnd: true,
+      nextBillingDate: true,
+    },
+  });
+  const currentPeriodStart = value.currentPeriodStart ?? existing?.currentPeriodStart ?? null;
+  const currentPeriodEnd = value.currentPeriodEnd ?? existing?.currentPeriodEnd ?? null;
+  const nextBillingDate = value.nextBillingDate ?? existing?.nextBillingDate ?? null;
+  if (
+    (options.retainPaidPeriod ?? true) &&
+    value.status === "canceled" &&
+    existing?.cancelAtPeriodEnd
+  ) {
+    const periodEnd = currentPeriodEnd ?? nextBillingDate;
+    if (periodEnd && periodEnd.getTime() > Date.now()) {
+      // A subscription that was scheduled to end must keep its paid access
+      // until the period actually ends, even if the provider emits an early
+      // terminal event or reports an early `ended_at`.
+      value = {
+        ...value,
+        status: providerStatusForLocalStatus(existing.status),
+        endedAt: null,
+        canceledAt: null,
+        cancelAtPeriodEnd: true,
+      };
+    }
+  }
+  const terminal = value.status === "canceled" || value.status === "incomplete_expired";
+  let cancelAtPeriodEnd = terminal ? false : options.cancelAtPeriodEnd ?? value.cancelAtPeriodEnd;
+  if (
+    !terminal &&
+    !cancelAtPeriodEnd &&
+    provider === "RAZORPAY" &&
+    liveProviderStatusSet.has(value.status) &&
+    existing?.cancelAtPeriodEnd
+  ) {
+    // Razorpay does not surface cycle-end cancellations on the subscription
+    // entity (`has_scheduled_changes` stays false), so an unrelated webhook
+    // must not silently re-enable automatic renewal.
+    cancelAtPeriodEnd = true;
+  }
   return client.subscription.upsert({
     where: { provider_providerSubscriptionId: { provider, providerSubscriptionId: value.id } },
     create: {
@@ -400,10 +721,10 @@ async function persistSubscription(
       provider,
       providerSubscriptionId: value.id,
       status: statusMap[value.status],
-      currentPeriodStart: value.currentPeriodStart,
-      currentPeriodEnd: value.currentPeriodEnd,
-      nextBillingDate: value.nextBillingDate,
-      cancelAtPeriodEnd: value.cancelAtPeriodEnd,
+      currentPeriodStart,
+      currentPeriodEnd,
+      nextBillingDate,
+      cancelAtPeriodEnd,
       canceledAt: value.canceledAt,
       endedAt: value.endedAt,
     },
@@ -411,10 +732,10 @@ async function persistSubscription(
       planId: owner.planId,
       interval: owner.interval,
       status: statusMap[value.status],
-      currentPeriodStart: value.currentPeriodStart,
-      currentPeriodEnd: value.currentPeriodEnd,
-      nextBillingDate: value.nextBillingDate,
-      cancelAtPeriodEnd: value.cancelAtPeriodEnd,
+      currentPeriodStart,
+      currentPeriodEnd,
+      nextBillingDate,
+      cancelAtPeriodEnd,
       canceledAt: value.canceledAt,
       endedAt: value.endedAt,
       providerCustomerId: value.customerId || owner.providerCustomerId,
@@ -533,35 +854,72 @@ export async function processVerifiedProviderEvent(provider: PaymentProviderName
   try {
     await prisma.$transaction(async (tx) => {
       const metadata = event.subscription?.metadata ?? {};
-      const ownerType = metadata.ownerType === "ORGANIZATION" ? BillingOwnerType.ORGANIZATION
+      const metadataOwnerType = metadata.ownerType === "ORGANIZATION" ? BillingOwnerType.ORGANIZATION
         : metadata.ownerType === "USER" ? BillingOwnerType.USER : null;
-      const externalCustomerId = event.subscription?.customerId || event.invoice?.customerId || event.payment?.customerId;
-      let billingCustomer = externalCustomerId
-        ? await tx.billingCustomer.findFirst({ where: { provider, providerCustomerId: externalCustomerId } })
+      const metadataOwner = metadataOwnerType && metadata.ownerId
+        ? { ownerType: metadataOwnerType, ownerId: metadata.ownerId }
         : null;
+      const externalCustomerId = event.subscription?.customerId || event.invoice?.customerId || event.payment?.customerId;
+      const relatedSubscriptionId = event.payment?.subscriptionId ?? event.subscription?.id ?? event.invoice?.subscriptionId ?? null;
       const checkoutAttempt = await tx.checkoutAttempt.findFirst({
-        where: event.subscription
-          ? {
-              provider,
-              OR: [
-                { providerSubscriptionId: event.subscription.id },
-                ...(event.checkoutId ? [{ providerCheckoutId: event.checkoutId }] : []),
-                { providerCheckoutId: event.subscription.id },
-              ],
-            }
-          : { provider, providerCheckoutId: event.id },
+        where: {
+          provider,
+          OR: [
+            ...(relatedSubscriptionId ? [{ providerSubscriptionId: relatedSubscriptionId }] : []),
+            ...(event.subscription
+              ? [
+                  { providerSubscriptionId: event.subscription.id },
+                  ...(event.checkoutId ? [{ providerCheckoutId: event.checkoutId }] : []),
+                  { providerCheckoutId: event.subscription.id },
+                ]
+              : [{ providerCheckoutId: event.id }]),
+          ],
+        },
+        orderBy: { createdAt: "desc" },
       });
-      const owner = billingCustomer
-        ? { ownerType: billingCustomer.ownerType, ownerId: billingCustomer.ownerId }
-        : checkoutAttempt
-          ? { ownerType: checkoutAttempt.ownerType, ownerId: checkoutAttempt.ownerId }
-          : null;
+      const persistedSubscription = relatedSubscriptionId
+        ? await tx.subscription.findUnique({
+            where: { provider_providerSubscriptionId: { provider, providerSubscriptionId: relatedSubscriptionId } },
+            select: { ownerType: true, ownerId: true },
+          })
+        : null;
+      // Razorpay deduplicates customers by email, so a single provider customer
+      // can be shared by several billing owners. Only treat the customer mapping
+      // as ownership when exactly one owner references it.
+      const customerOwners = externalCustomerId
+        ? await tx.billingCustomer.findMany({
+            where: { provider, providerCustomerId: externalCustomerId },
+            select: { ownerType: true, ownerId: true },
+          })
+        : [];
+      const customerOwner = customerOwners.length === 1 ? customerOwners[0] : null;
+      const checkoutOwner = checkoutAttempt
+        ? { ownerType: checkoutAttempt.ownerType, ownerId: checkoutAttempt.ownerId }
+        : null;
+      // The owner recorded on the subscription (or checkout attempt) is the most
+      // specific signal and stays correct when the provider customer is shared.
+      const owner = metadataOwner ?? checkoutOwner ?? persistedSubscription ?? customerOwner;
+      let billingCustomer = owner
+        ? await tx.billingCustomer.findUnique({ where: { ownerType_ownerId_provider: { ...owner, provider } } })
+        : null;
 
-      if (owner && checkoutAttempt && (owner.ownerType !== checkoutAttempt.ownerType || owner.ownerId !== checkoutAttempt.ownerId)) {
-        throw new Error("Provider customer and checkout attempt map to different billing owners.");
-      }
-      if (owner && ownerType && metadata.ownerId && (owner.ownerType !== ownerType || owner.ownerId !== metadata.ownerId)) {
-        throw new Error("Provider subscription metadata does not match its stored billing owner.");
+      const conflictingOwner = [checkoutOwner, persistedSubscription].find(
+        (candidate) => candidate && owner && (candidate.ownerType !== owner.ownerType || candidate.ownerId !== owner.ownerId),
+      );
+      if (conflictingOwner) {
+        // Metadata is authoritative because it is written when the provider
+        // subscription is created. Never fail the webhook over a shared
+        // customer or stale local mapping.
+        console.warn("Provider event owner disagrees with stored billing ownership.", {
+          provider,
+          eventId: event.id,
+          eventType: event.type,
+          selectedOwner: owner,
+          metadataOwner,
+          checkoutOwner,
+          persistedSubscription,
+          customerOwners,
+        });
       }
 
       if (event.subscription && owner) {
@@ -603,9 +961,12 @@ export async function processVerifiedProviderEvent(provider: PaymentProviderName
                 ...owner,
                 provider,
                 providerCustomerId: event.subscription.customerId,
-                email: initiatingUser?.email ?? "billing@unavailable.invalid",
+                email: initiatingUser?.email ?? billingCustomer?.email ?? "billing@unavailable.invalid",
               },
-              update: { providerCustomerId: event.subscription.customerId },
+              update: {
+                providerCustomerId: event.subscription.customerId,
+                ...(initiatingUser?.email ? { email: initiatingUser.email } : {}),
+              },
             });
           }
           await persistSubscription(tx, provider, event.subscription, {
@@ -630,17 +991,19 @@ export async function processVerifiedProviderEvent(provider: PaymentProviderName
       }
 
       let eventOwner = owner;
-      if (!eventOwner && event.payment?.customerId) {
-        const customer = await tx.billingCustomer.findFirst({ where: { provider, providerCustomerId: event.payment.customerId } });
-        if (customer) eventOwner = { ownerType: customer.ownerType, ownerId: customer.ownerId };
-      }
-      const relatedSubscriptionId = event.payment?.subscriptionId ?? event.subscription?.id ?? event.invoice?.subscriptionId;
-      if (!eventOwner && relatedSubscriptionId) {
-        const subscription = await tx.subscription.findUnique({
-          where: { provider_providerSubscriptionId: { provider, providerSubscriptionId: relatedSubscriptionId } },
+      if (!eventOwner && event.payment?.invoiceId) {
+        const persistedInvoice = await tx.invoice.findUnique({
+          where: { provider_providerInvoiceId: { provider, providerInvoiceId: event.payment.invoiceId } },
           select: { ownerType: true, ownerId: true },
         });
-        if (subscription) eventOwner = { ownerType: subscription.ownerType, ownerId: subscription.ownerId };
+        if (persistedInvoice) eventOwner = { ownerType: persistedInvoice.ownerType, ownerId: persistedInvoice.ownerId };
+      }
+      if (!eventOwner && event.payment?.customerId) {
+        const customerOwnersForPayment = await tx.billingCustomer.findMany({
+          where: { provider, providerCustomerId: event.payment.customerId },
+          select: { ownerType: true, ownerId: true },
+        });
+        if (customerOwnersForPayment.length === 1) eventOwner = customerOwnersForPayment[0];
       }
       if (eventOwner && event.invoice) {
         await persistInvoice(tx, provider, event.invoice, eventOwner);
@@ -657,6 +1020,19 @@ export async function processVerifiedProviderEvent(provider: PaymentProviderName
         await tx.checkoutAttempt.update({ where: { id: checkoutAttempt.id }, data: { status: "processed" } });
       }
     });
+    if (event.subscription?.status === "active" && event.subscription.metadata.replacesSubscriptionId) {
+      const replacement = await prisma.subscription.findUnique({
+        where: { provider_providerSubscriptionId: { provider, providerSubscriptionId: event.subscription.id } },
+        select: { ownerType: true, ownerId: true },
+      });
+      if (replacement) {
+        await cancelSupersededSubscription(
+          getPaymentProviderByName(provider),
+          replacement,
+          event.subscription.metadata.replacesSubscriptionId,
+        );
+      }
+    }
     return { duplicate: false };
   } catch (error) {
     await prisma.paymentEvent.update({
@@ -719,6 +1095,14 @@ export async function verifyRazorpayCheckout(input: unknown) {
       data: { status: "completed" },
     });
   });
+  const replacementIsLive = remote.status === "active" || remote.status === "trialing";
+  if (payment.status === "succeeded" && replacementIsLive && remote.metadata.replacesSubscriptionId) {
+    await cancelSupersededSubscription(
+      provider,
+      { ownerType: attempt.ownerType, ownerId: attempt.ownerId },
+      remote.metadata.replacesSubscriptionId,
+    );
+  }
   return { subscriptionStatus: remote.status };
 }
 
@@ -741,6 +1125,20 @@ export async function refreshProviderHistory(input: unknown) {
     where: { ownerType_ownerId_provider: { ...owner, provider: providerName } },
   });
   if (!customer) return;
+  // Razorpay deduplicates customers by email, so a user and an organization
+  // can share one provider customer. When that happens, only history tied to
+  // this owner's subscriptions may be attributed to this owner.
+  const sharedCustomer = (await prisma.billingCustomer.count({
+    where: { provider: providerName, providerCustomerId: customer.providerCustomerId },
+  })) > 1;
+  const ownedProviderSubscriptionIds = new Set(
+    sharedCustomer
+      ? (await prisma.subscription.findMany({
+          where: owner,
+          select: { providerSubscriptionId: true },
+        })).map((subscription) => subscription.providerSubscriptionId)
+      : [],
+  );
   const provider = getPaymentProviderByName(providerName);
   const paymentMethodsPromise = provider.capabilities.supportsPaymentMethodManagement
     ? provider.listPaymentMethods(customer.providerCustomerId)
@@ -750,9 +1148,19 @@ export async function refreshProviderHistory(input: unknown) {
     provider.listPayments(customer.providerCustomerId),
     paymentMethodsPromise,
   ]);
+  const ownedInvoices = sharedCustomer
+    ? invoices.filter((invoice) => invoice.subscriptionId && ownedProviderSubscriptionIds.has(invoice.subscriptionId))
+    : invoices;
+  const ownedInvoiceIds = new Set(ownedInvoices.map((invoice) => invoice.id));
+  const ownedPayments = sharedCustomer
+    ? payments.filter((payment) =>
+        (payment.subscriptionId ? ownedProviderSubscriptionIds.has(payment.subscriptionId) : false) ||
+        (payment.invoiceId ? ownedInvoiceIds.has(payment.invoiceId) : false),
+      )
+    : payments;
   await prisma.$transaction(async (tx) => {
-    for (const invoice of invoices) await persistInvoice(tx, providerName, invoice, owner);
-    for (const payment of payments) await persistPayment(tx, providerName, payment, owner);
+    for (const invoice of ownedInvoices) await persistInvoice(tx, providerName, invoice, owner);
+    for (const payment of ownedPayments) await persistPayment(tx, providerName, payment, owner);
     await tx.paymentMethod.deleteMany({
       where: {
         ...owner,
